@@ -1,0 +1,38 @@
+name: Bug report
+description: Something in the bridge or a skill does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `opencontact doctor`
+      description: Paste it. It redacts your API key.
+      render: text
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.1"
+  - type: input
+    id: imsg
+    attributes:
+      label: imsg version
+      placeholder: output of `imsg --version`
+  - type: input
+    id: bridge
+    attributes:
+      label: Bridge version
+      placeholder: output of `opencontact --version`
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: From the terminal or the audit log. Remove phone numbers you do not want public.
+      render: text

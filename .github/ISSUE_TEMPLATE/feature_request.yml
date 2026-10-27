@@ -1,0 +1,23 @@
+name: Feature request
+description: A harness, channel, or capability you want
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Skills (Claude Code, Codex, Cursor, OpenClaw, other harness)
+        - iMessage bridge
+        - Docs
+        - Something else
