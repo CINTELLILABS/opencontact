@@ -1,0 +1,14 @@
+{
+  "name": "opencontact",
+  "displayName": "opencontact",
+  "version": "0.1.0",
+  "description": "Skills to build a Bland business agent from a website, run it behind the iMessage line on your Mac, and move it to its own number when you are ready.",
+  "author": {
+    "name": "Bland"
+  },
+  "homepage": "https://github.com/CINTELLILABS/opencontact",
+  "repository": "https://github.com/CINTELLILABS/opencontact",
+  "license": "MIT",
+  "keywords": ["bland", "imessage", "sms", "rcs", "business-agent", "messaging"],
+  "skills": ["./skills/opencontact-build-agent", "./skills/opencontact-run", "./skills/opencontact-phone-number"]
+}

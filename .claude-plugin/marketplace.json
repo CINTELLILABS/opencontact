@@ -1,0 +1,18 @@
+{
+  "name": "opencontact",
+  "description": "Put your business's Bland agent in your customers' Messages app.",
+  "owner": {
+    "name": "Bland"
+  },
+  "homepage": "https://github.com/CINTELLILABS/opencontact",
+  "repository": "https://github.com/CINTELLILABS/opencontact",
+  "plugins": [
+    {
+      "name": "opencontact",
+      "source": "./",
+      "description": "Skills to build a Bland business agent from a website, run it behind the iMessage line on your Mac, and move it to its own number when you are ready.",
+      "category": "productivity",
+      "keywords": ["bland", "imessage", "sms", "rcs", "business-agent", "messaging", "skills"]
+    }
+  ]
+}
