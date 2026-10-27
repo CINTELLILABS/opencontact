@@ -1,0 +1,56 @@
+{
+  "name": "opencontact",
+  "version": "0.1.0",
+  "description": "Contacts In Your Phone: put your business's Bland AI agent behind the iMessage line already on your Mac. npx opencontact.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "opencontact": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CINTELLILABS/opencontact.git",
+    "directory": "packages/opencontact"
+  },
+  "homepage": "https://github.com/CINTELLILABS/opencontact/tree/main/packages/opencontact#readme",
+  "keywords": [
+    "imessage",
+    "bland",
+    "ai-agent",
+    "business-agent",
+    "opencontact",
+    "contacts-in-your-phone",
+    "imsg",
+    "messages",
+    "macos",
+    "sms"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "dev": "node --experimental-strip-types src/cli.ts",
+    "prepack": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  }
+}
