@@ -40,7 +40,7 @@ import {
   resolveConfig,
   saveConfig,
 } from "./config.ts";
-import { inferOwnHandle, isPhoneHandle, normalizeHandle } from "./handles.ts";
+import { inferOwnHandle, isPhoneHandle, maskHandle, normalizeHandle } from "./handles.ts";
 import { ImsgRpc, spawnImsg } from "./imsg.ts";
 import { installedReleaseImsg, installImsgFromRelease } from "./install-imsg.ts";
 import { FileSentLedger } from "./ledger.ts";
@@ -711,7 +711,10 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
   }
 
   const level = (flagString(args, "log-level") as Level | undefined) ?? "info";
+  let current: { bridge: Bridge; rpc: ImsgRpc } | null = null;
+  let shutdown: () => Promise<void> = async () => {};
   const state = new FileStateStore(join(config.stateDir, "state.json"));
+  const audit = new JsonlAudit(join(config.stateDir, "audit.jsonl"));
   const names = new Map<string, string>();
   const nameOf = (h: string) => state.load().conversations[h]?.name ?? names.get(h) ?? formatHandle(h);
   // The live view takes the screen in a terminal; --log keeps plain log lines (and anything piped).
@@ -724,8 +727,34 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
           cardName: config.contactCard?.name,
           dryRun: config.dryRun,
           nameOf,
+          actions: {
+            send: async (handle, text) => {
+              if (!current) throw new Error("not connected to Messages");
+              const result = await current.rpc.send({ to: handle }, text);
+              current.bridge.markOwnSend(result.guid);
+              audit.write({
+                event: "owner_sent",
+                sender: maskHandle(handle),
+                chars: text.length,
+                ...(result.guid ? { message_guid: result.guid } : {}),
+              });
+            },
+            setManual: (handle, on) => {
+              if (on) manualHandles.add(handle);
+              else manualHandles.delete(handle);
+              current?.bridge.setManual(handle, on);
+            },
+            setDryRun: (value) => {
+              config.dryRun = value;
+              current?.bridge.setDryRun(value);
+              view?.setDryRun(value);
+            },
+            quit: () => void shutdown(),
+          },
         })
       : null;
+  // Conversations a person has taken over survive an imsg restart.
+  const manualHandles = new Set<string>();
   const log = view
     ? createLogger({
         level: "warn",
@@ -733,7 +762,6 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
         write: (line) => view.note(line.replace(/^\S+\s+/, ""), /ERROR/.test(line) ? "error" : "warn"),
       })
     : createLogger({ level, secrets: configSecrets(config) });
-  const audit = new JsonlAudit(join(config.stateDir, "audit.jsonl"));
   const brain = createBrain(config, { state, audit, log, userAgent: `opencontact/${BRIDGE_VERSION}` });
   const sentLedger = new FileSentLedger(join(config.stateDir, "sent-guids.txt"));
   const contactCardPath = writeContactCard(config);
@@ -763,9 +791,8 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
 
   let backoffMs = 1_000;
   let stopping = false;
-  let current: { bridge: Bridge; rpc: ImsgRpc } | null = null;
 
-  const shutdown = async () => {
+  shutdown = async () => {
     if (stopping) return;
     stopping = true;
     log.info("shutting down");
@@ -786,16 +813,18 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
     process.stdin.resume();
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (key: string) => {
+      if (view) {
+        view.key(key);
+        return;
+      }
       const k = key.toLowerCase();
       if (k === "q" || key === "\u0003") void shutdown();
       else if (k === "l" && current) {
         config.dryRun = false;
         current.bridge.setDryRun(false);
-        view?.setDryRun(false);
       } else if (k === "d" && current) {
         config.dryRun = true;
         current.bridge.setDryRun(true);
-        view?.setDryRun(true);
       }
     });
   }
@@ -827,13 +856,19 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
               view.done(e.handle);
               if (e.reason === "owner_takeover") view.note(`${nameOf(e.handle)}: you have this one, agent stays quiet`);
             },
-            takeover: (e) =>
-              view.note(`you replied to ${nameOf(e.handle)}: agent steps back for ${config.ownerTakeoverMinutes} min`),
+            takeover: (e) => {
+              if (e.text) view.you(e.handle, e.text);
+              view.driver(e.handle, "paused");
+              view.note(
+                `you replied to ${nameOf(e.handle)} from Messages: the agent steps back for ${config.ownerTakeoverMinutes} min`,
+              );
+            },
             error: (e) => view.note(`${e.where}: ${e.message}`, "error"),
           }
         : undefined,
     });
     current = { bridge, rpc };
+    for (const h of manualHandles) bridge.setManual(h, true);
     const exited = new Promise<void>((resolve) => rpc.once("exit", () => resolve()));
     try {
       await bridge.start();

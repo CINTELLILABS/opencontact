@@ -86,6 +86,12 @@ later without re-running setup. After the agent's first reply to a new
 customer, it sends the vCard once; the customer taps "Add to Contacts" and sees the business name from then
 on. Flags: `--card-name`, `--card-phone`, `--card-logo <png|jpg>`, `--no-card`.
 
+## The live view
+
+`npx opencontact run` opens a window with every conversation in a sidebar. Tell the owner: arrow keys switch
+conversations, Enter writes into the open one as themselves (their message goes out from their number and
+the agent pauses there), A hands it back to the agent, F follows the latest activity, Q quits.
+
 ## Things the owner should know
 
 - **They can take over any time.** When the owner types a reply in Messages, the agent pauses in that chat

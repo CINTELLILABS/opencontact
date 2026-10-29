@@ -22,8 +22,10 @@ First public release.
 - Answer modes: `everyone`, `outbound` (only people the agent texted first), and a list for testing.
 - `opencontact text <number> "why"`: the agent reaches out first. `--list people.csv` reaches out to a whole
   list, with names and other columns passed to the agent as details.
-- A live view for `opencontact run`: conversations as chat bubbles, typing dots while the agent works, the
-  card, and counts. `--log` keeps plain log lines.
+- A live view for `opencontact run`: every conversation in a sidebar with who is driving it (the agent, you,
+  or typing dots), the open conversation as chat bubbles, and a composer. Enter writes into the open
+  conversation as the owner and pauses the agent there; A hands it back; F follows the latest activity.
+  `--log` keeps plain log lines.
 - Replies to different conversations run in parallel; each conversation stays in order, and the resume point
   never passes a message still being answered.
 - Contact card: a vCard with the business name, logo, and the line's own number, sent once per contact.

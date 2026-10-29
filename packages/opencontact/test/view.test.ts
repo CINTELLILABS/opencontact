@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatHandle, LiveView, visibleWidth, wrap } from "../src/view.ts";
+import { formatHandle, LiveView, truncate, visibleWidth, wrap } from "../src/view.ts";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escape sequences is the point
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
-describe("wrap and width", () => {
+describe("text helpers", () => {
   it("wraps on words and breaks words longer than the line", () => {
     expect(wrap("We do, PPO and Premier. Want me to book a cleaning?", 20)).toEqual([
       "We do, PPO and",
@@ -13,63 +13,113 @@ describe("wrap and width", () => {
     ]);
     expect(wrap("abcdefghij", 4)).toEqual(["abcd", "efgh", "ij"]);
   });
-  it("counts emoji as two cells and ignores ANSI", () => {
+  it("counts emoji as two cells, ignores ANSI, truncates with an ellipsis", () => {
     expect(visibleWidth("hi 🙌")).toBe(5);
     expect(visibleWidth("\x1b[1mbold\x1b[0m")).toBe(4);
+    expect(truncate("Hello there friend", 8)).toBe("Hello t…");
   });
   it("formats US numbers", () => {
     expect(formatHandle("+14155550134")).toBe("(415) 555-0134");
-    expect(formatHandle("a@b.co")).toBe("a@b.co");
   });
 });
 
+const SAM = "+14155550134";
+const PRIYA = "+14155550199";
+
+function make(actions?: Partial<import("../src/view.ts").ViewActions>) {
+  const calls: string[] = [];
+  const v = new LiveView({
+    title: "opencontact",
+    brain: "Bland",
+    answers: "everyone",
+    cardName: "Acme Dental",
+    dryRun: false,
+    nameOf: (h) => (h === SAM ? "Sam" : h === PRIYA ? "Priya" : formatHandle(h)),
+    now: () => new Date(2026, 9, 29, 16, 12),
+    actions: {
+      send: async (h, t) => {
+        calls.push(`send ${h} ${t}`);
+      },
+      setManual: (h, on) => calls.push(`manual ${h} ${on}`),
+      setDryRun: (d) => calls.push(`dry ${d}`),
+      quit: () => calls.push("quit"),
+      ...actions,
+    },
+    // Keep the screen out of the test output.
+    out: { write: () => true, columns: 110, rows: 30 } as unknown as NodeJS.WriteStream,
+  });
+  return { v, calls };
+}
+
 describe("LiveView", () => {
-  const make = () =>
-    new LiveView({
-      title: "opencontact",
-      brain: "Bland",
-      answers: "everyone",
-      cardName: "Acme Dental",
-      dryRun: false,
-      nameOf: (h) => (h === "+14155550134" ? "Sam" : formatHandle(h)),
-      now: () => new Date(2026, 9, 29, 16, 12),
-    });
-
-  it("draws the header, an inbound bubble on the left, the reply and card on the right, and fills the screen", () => {
-    const v = make();
-    v.inbound("+14155550134", "do you take Delta Dental?");
-    v.thinking("+14155550134");
-    v.reply("+14155550134", "Yes, PPO and Premier. Want me to book Thursday at 4:30?", false);
-    v.card("+14155550134", false);
-    const lines = v.lines(90, 24);
-    expect(lines).toHaveLength(24);
-    const plain = lines.map(strip);
-    expect(plain[0]).toMatch(/opencontact .*Bland .*answers everyone .*● LIVE/);
-    const inIdx = plain.findIndex((l) => l.includes("do you take Delta Dental?"));
-    expect(plain[inIdx]?.startsWith("   do you take")).toBe(true);
-    expect(plain.some((l) => l.trimStart().startsWith("Sam") && l.includes("4:12"))).toBe(true);
-    const outLine = plain.find((l) => l.includes("Yes, PPO and Premier."));
-    expect(outLine && outLine.indexOf("Yes") > 20).toBe(true);
-    expect(plain.some((l) => l.includes("◉ Acme Dental · contact card"))).toBe(true);
-    expect(plain.at(-1)).toMatch(/waiting for texts .*1 in · 1 sent · 1 card/);
-    for (const l of lines) expect(visibleWidth(l)).toBeLessThanOrEqual(90);
+  it("lists conversations in a sidebar and shows the followed one as bubbles", () => {
+    const { v } = make();
+    v.inbound(SAM, "do you take Delta Dental?");
+    v.thinking(SAM);
+    v.reply(SAM, "Yes, PPO and Premier. Want me to book Thursday at 4:30?", false);
+    v.card(SAM, false);
+    v.inbound(PRIYA, "can I move my cleaning?");
+    const lines = v.lines(110, 30);
+    expect(lines).toHaveLength(30);
+    for (const l of lines) expect(visibleWidth(l)).toBeLessThanOrEqual(110);
+    const plain = lines.map(strip).join("\n");
+    expect(plain).toMatch(/opencontact .*Bland .*answers everyone .*● LIVE/);
+    expect(plain).toContain("CONVERSATIONS");
+    expect(plain).toMatch(/Sam\s+AI/);
+    // Following: the latest activity (Priya) is the open thread.
+    expect(plain).toMatch(/Priya\s+\(415\) 555-0199\s+● agent is answering/);
+    expect(plain).toContain("can I move my cleaning?");
+    expect(plain).not.toContain("Yes, PPO and Premier");
   });
 
-  it("shows typing dots for a contact while the brain thinks", () => {
-    const v = make();
-    v.inbound("+14155550134", "hi");
-    v.thinking("+14155550134");
-    expect(strip(v.lines(90, 20).at(-1) ?? "")).toMatch(/replying to Sam [●○]{3}/);
+  it("switches threads with the arrow keys and stops following", () => {
+    const { v } = make();
+    v.reply(SAM, "Hi Sam, this is Acme Dental.", false, true);
+    v.inbound(PRIYA, "hello");
+    v.key("\x1b[B");
+    const plain = v.lines(110, 30).map(strip).join("\n");
+    expect(plain).toContain("Hi Sam, this is Acme Dental.");
+    expect(plain).toContain("agent · reached out");
+    expect(plain).not.toContain("following");
+    v.inbound(PRIYA, "still there?");
+    expect(v.lines(110, 30).map(strip).join("\n")).toContain("Hi Sam, this is Acme Dental.");
   });
 
-  it("marks dry-run replies", () => {
-    const v = make();
-    v.reply("+14155550134", "hello", true);
-    expect(
-      v
-        .lines(90, 12)
-        .map(strip)
-        .some((l) => l.includes("DRY RUN · would send to Sam")),
-    ).toBe(true);
+  it("lets the owner write into a conversation, which pauses the agent there", async () => {
+    const { v, calls } = make();
+    v.inbound(SAM, "can I talk to a person?");
+    v.key("\r");
+    for (const ch of "Hey Sam, it's Raj") v.key(ch);
+    expect(strip(v.lines(110, 30).at(-2) ?? "")).toContain("to Sam › Hey Sam, it's Raj");
+    v.key("\r");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toContain(`manual ${SAM} true`);
+    expect(calls).toContain(`send ${SAM} Hey Sam, it's Raj`);
+    const plain = v.lines(110, 30).map(strip).join("\n");
+    expect(plain).toContain("● you have this conversation");
+    expect(plain).toMatch(/Sam\s+YOU/);
+    v.key("a");
+    expect(calls).toContain(`manual ${SAM} false`);
+    expect(v.lines(110, 30).map(strip).join("\n")).toContain("● agent is answering");
+  });
+
+  it("does not quit on q while typing, and Esc cancels", () => {
+    const { v, calls } = make();
+    v.inbound(SAM, "hi");
+    v.key("\r");
+    v.key("q");
+    expect(calls).not.toContain("quit");
+    v.key("\x1b");
+    v.key("q");
+    expect(calls).toContain("quit");
+  });
+
+  it("shows typing dots and dry-run replies", () => {
+    const { v } = make();
+    v.inbound(SAM, "hi");
+    v.thinking(SAM);
+    expect(v.lines(110, 30).map(strip).join("\n")).toMatch(/Sam\s+[●○]{3}/);
+    v.reply(SAM, "hello", true);
+    expect(v.lines(110, 30).map(strip).join("\n")).toContain("agent · DRY RUN, not sent");
   });
 });

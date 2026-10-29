@@ -25,7 +25,7 @@ export interface BridgeEvents {
   /** Something opencontact sent from another process (`opencontact text`), seen coming back from Messages. */
   ownSend?(e: { handle: string; chatId: number; text: string; card: boolean }): void;
   skipped?(e: { handle: string; reason: SkipReason }): void;
-  takeover?(e: { handle: string; chatId: number }): void;
+  takeover?(e: { handle: string; chatId: number; text: string }): void;
   error?(e: { where: string; message: string }): void;
 }
 
@@ -86,6 +86,24 @@ export class Bridge {
     this.takeover = new TakeoverTracker(deps.config.ownerTakeoverMinutes, now);
     this.dryRun = deps.config.dryRun;
     this.state = deps.state.load();
+  }
+
+  /** Conversations a person has taken over: the agent stays out until handed back. */
+  private readonly manual = new Set<string>();
+
+  setManual(handle: string, on: boolean): void {
+    const h = normalizeHandle(handle);
+    if (on) this.manual.add(h);
+    else this.manual.delete(h);
+  }
+
+  isManual(handle: string): boolean {
+    return this.manual.has(normalizeHandle(handle));
+  }
+
+  /** A message the owner sent from opencontact itself: its echo is neither the agent nor a takeover. */
+  markOwnSend(guid: string | undefined): void {
+    this.takeover.markBridgeSent(guid);
   }
 
   /** Flip between dry-run and live without restarting. */
@@ -222,7 +240,12 @@ export class Bridge {
         const engaged = this.deps.state.load().conversations[to] !== undefined;
         const alreadyPaused = this.takeover.isPaused(key);
         this.takeover.ownerReplied(key);
-        if (engaged && !alreadyPaused) this.deps.events?.takeover?.({ handle: to, chatId: msg.chat_id });
+        if (engaged)
+          this.deps.events?.takeover?.({
+            handle: to,
+            chatId: msg.chat_id,
+            text: alreadyPaused ? (msg.text ?? "") : (msg.text ?? ""),
+          });
         audit.write({ event: "owner_reply", guid: msg.guid, chat_id: msg.chat_id });
         log.info("owner replied from Messages; agent paused in this chat", {
           chat_id: msg.chat_id,
@@ -248,12 +271,12 @@ export class Bridge {
     if (config.maxAgeMinutes > 0 && Number.isFinite(sentAt) && now - sentAt > config.maxAgeMinutes * 60_000)
       return this.skipAndAdvance(msg, sender, "stale");
     if (!this.allow.allows(sender)) return this.skipAndAdvance(msg, sender, "not_allowed");
-    if (this.takeover.isPaused(key)) return this.skipAndAdvance(msg, sender, "owner_takeover");
 
     const images = brain.acceptsImages ? pickImages(msg.attachments) : [];
     const text = inboundText(msg, config.attachments, images.length);
     if (text === null) return this.skipAndAdvance(msg, sender, "empty");
 
+    // Shown even when a person has the conversation, so they see what came in.
     this.deps.events?.inbound?.({
       handle: sender,
       name: typeof msg.sender_name === "string" && msg.sender_name ? msg.sender_name : undefined,
@@ -261,6 +284,9 @@ export class Bridge {
       text: (msg.text ?? "").replace(/\uFFFC/g, "").trim() || (images.length > 0 ? "📷 photo" : text),
       images: images.length,
     });
+    if (this.manual.has(sender)) return this.skipAndAdvance(msg, sender, "manual");
+    if (this.takeover.isPaused(key)) return this.skipAndAdvance(msg, sender, "owner_takeover");
+
     this.deps.events?.thinking?.({ handle: sender, chatId: msg.chat_id });
     const turn = await brain.reply(sender, text, msg.guid, images);
     this.stats.turns += 1;
@@ -375,7 +401,13 @@ export class Bridge {
   }
 
   private skip(msg: ImsgMessage, sender: string, reason: SkipReason): void {
-    if (reason !== "bridge_sent" && reason !== "duplicate" && reason !== "edit_or_unsend" && reason !== "stale")
+    if (
+      reason !== "bridge_sent" &&
+      reason !== "duplicate" &&
+      reason !== "edit_or_unsend" &&
+      reason !== "stale" &&
+      reason !== "manual"
+    )
       this.deps.events?.skipped?.({ handle: sender, reason });
     this.stats.skipped += 1;
     this.deps.audit.write({ event: "skipped", guid: msg.guid, sender: maskHandle(sender), reason });

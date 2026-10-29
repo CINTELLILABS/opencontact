@@ -447,7 +447,7 @@ describe("Bridge", () => {
     expect(audit.records.some((r) => r.event === "skipped" && r.reason === "stale")).toBe(true);
   });
 
-  it("notes a takeover only for conversations the agent is in, and once per pause", async () => {
+  it("reports the owner's messages only for conversations the agent is in", async () => {
     const imsg = new FakeImsg();
     const state = new MemoryStateStore();
     state.save({
@@ -473,7 +473,8 @@ describe("Bridge", () => {
     imsg.emit("message", mine(3, "+14155551212", "O1"), 1);
     imsg.emit("message", mine(4, "+14155551212", "O2"), 1);
     await bridge.idle();
-    expect(notes).toEqual(["+14155551212"]);
+    // Personal chats never show; every message in an agent conversation does, so the view can show it.
+    expect(notes).toEqual(["+14155551212", "+14155551212"]);
   });
 
   it("refuses to start when the database is not readable", async () => {

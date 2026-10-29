@@ -47,8 +47,9 @@ No new number. No carrier forms. No server.
 - **Puts you in their Contacts.** With its first message the agent sends your contact card: your name, logo, and
   number. One tap and every text after that says "Acme Dental", not a number nobody recognizes. No other open
   source tool does this.
-- **Hands back to you.** Reply yourself in Messages and the agent steps aside in that conversation. Caps, an audit
-  log, and an outreach mode that never talks to strangers keep it safe on a real business line.
+- **You can step in anytime.** Every conversation sits in one window. Open one, type, and your message goes out
+  from your number while the agent steps aside; press **A** to hand it back. Replying from the Messages app works
+  too. Caps, an audit log, and an outreach mode that never talks to strangers keep it safe on a real line.
 
 ## Quick start
 
@@ -116,7 +117,7 @@ shorter", "never quote prices", "hand off when someone says cancel". Claude Code
 | Command                                   | What it does                                                          |
 | ----------------------------------------- | --------------------------------------------------------------------- |
 | `opencontact`                             | First run: guided setup. After that: same as `run`.                   |
-| `opencontact run [--live]`                | Answer texts in the live view: every conversation as it happens. **L** live, **D** dry-run, **Q** quit. |
+| `opencontact run [--live]`                | The live view: every conversation in a sidebar, the open one as chat bubbles. **↑↓** switch, **Enter** write as yourself, **A** hand back to the agent, **F** follow the latest, **L**/**D** live or dry-run, **Q** quit. |
 | `opencontact text <number> "why"`         | The agent reaches out first, then sends your card.                    |
 | `opencontact text --list people.csv "why"` | Reach out to a whole list. Names and any other columns become details for each message. |
 | `opencontact answer everyone\|outbound`   | Answer anyone, or only people the agent texted first.                 |

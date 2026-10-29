@@ -25,6 +25,7 @@ export type AuditEvent =
       message_guid?: string;
       dry_run: boolean;
     }
+  | { event: "owner_sent"; sender: string; chars: number; message_guid?: string }
   | { event: "error"; where: string; error: string };
 
 export type SkipReason =
@@ -35,7 +36,8 @@ export type SkipReason =
   | "empty"
   | "duplicate"
   | "bridge_sent"
-  | "stale";
+  | "stale"
+  | "manual";
 
 export interface AuditSink {
   write(record: AuditEvent): void;
