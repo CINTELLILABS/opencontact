@@ -685,7 +685,7 @@ async function cmdDoctor(args: Args, configPath: string): Promise<void> {
     checks.push({
       name: "answers",
       ok: true,
-      detail: config.allowFrom.length === 0 ? "anyone who texts" : `only ${config.allowFrom.join(", ")}`,
+      detail: describeAnswer(config),
     });
   }
 
