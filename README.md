@@ -60,12 +60,17 @@ opencontact card "Acme Dental" --logo logo.png
 opencontact run --live
 ```
 
-**Do outreach without answering strangers.** The agent only talks to people it texted first.
+**Remind everyone on a list.** Each person gets their own message, the replies come back in parallel, and the
+agent only talks to people it texted first.
 
 ```sh
 opencontact answer outbound
-opencontact text +14155550134 "follow up on Thursday's cleaning quote"
+opencontact text --list patients.csv "remind them about this week's appointment"
 ```
+
+`patients.csv` is any spreadsheet export with a phone column. Names and other columns (appointment time,
+provider) go to the agent as details for that person. Keep `opencontact run` open in another tab to watch the
+replies roll in.
 
 Setup installs [`imsg`](https://github.com/openclaw/imsg) from its signed release, walks you through the two
 macOS permissions, and starts. You need macOS 14 or later, Node 24 or later, and a Bland API key: free, no card, from
@@ -111,8 +116,9 @@ shorter", "never quote prices", "hand off when someone says cancel". Claude Code
 | Command                                   | What it does                                                          |
 | ----------------------------------------- | --------------------------------------------------------------------- |
 | `opencontact`                             | First run: guided setup. After that: same as `run`.                   |
-| `opencontact run [--live]`                | Answer texts. **L** goes live, **D** back to dry-run, **Q** quits.    |
+| `opencontact run [--live]`                | Answer texts in the live view: every conversation as it happens. **L** live, **D** dry-run, **Q** quit. |
 | `opencontact text <number> "why"`         | The agent reaches out first, then sends your card.                    |
+| `opencontact text --list people.csv "why"` | Reach out to a whole list. Names and any other columns become details for each message. |
 | `opencontact answer everyone\|outbound`   | Answer anyone, or only people the agent texted first.                 |
 | `opencontact only <number…>`              | Answer only these numbers, for testing on a personal line.            |
 | `opencontact brain <name>`                | Switch who answers.                                                   |

@@ -16,6 +16,19 @@ export type ImsgLike = Pick<
   "status" | "subscribe" | "unsubscribe" | "after" | "send" | "sendFile" | "on" | "off"
 >;
 
+/** What the live view (or anything else) wants to hear about, as it happens. */
+export interface BridgeEvents {
+  inbound?(e: { handle: string; name?: string | undefined; chatId: number; text: string; images: number }): void;
+  thinking?(e: { handle: string; chatId: number }): void;
+  reply?(e: { handle: string; chatId: number; text: string; dryRun: boolean }): void;
+  card?(e: { handle: string; chatId: number; dryRun: boolean }): void;
+  /** Something opencontact sent from another process (`opencontact text`), seen coming back from Messages. */
+  ownSend?(e: { handle: string; chatId: number; text: string; card: boolean }): void;
+  skipped?(e: { handle: string; reason: SkipReason }): void;
+  takeover?(e: { handle: string; chatId: number }): void;
+  error?(e: { where: string; message: string }): void;
+}
+
 export interface BridgeDeps {
   config: BridgeConfig;
   imsg: ImsgLike;
@@ -28,6 +41,7 @@ export interface BridgeDeps {
   sentLedger?: SentLedger | undefined;
   /** Path of the business's .vcf, sent once per customer after the first reply. */
   contactCardPath?: string | undefined;
+  events?: BridgeEvents | undefined;
   now?: () => number;
 }
 
@@ -55,7 +69,11 @@ export class Bridge {
   private state: BridgeState;
   private dryRun: boolean;
   private subscription: number | null = null;
-  private queue: Promise<void> = Promise.resolve();
+  /** One promise chain per chat: a chat's messages stay in order, different chats run concurrently. */
+  private readonly chains = new Map<string, Promise<void>>();
+  private readonly inflight = new Set<number>();
+  private doneMax: number | null = null;
+  private recovering: Promise<void> = Promise.resolve();
   private stopped = false;
 
   constructor(private readonly deps: BridgeDeps) {
@@ -124,22 +142,41 @@ export class Bridge {
       }
       this.subscription = null;
     }
-    await this.queue;
+    await this.idle();
   }
 
   /** Wait for everything queued so far. Tests use this. */
-  idle(): Promise<void> {
-    return this.queue;
+  async idle(): Promise<void> {
+    for (;;) {
+      const pending = [...this.chains.values(), this.recovering];
+      await Promise.all(pending);
+      if ([...this.chains.values(), this.recovering].every((p) => pending.includes(p))) return;
+    }
   }
 
   private readonly onMessage = (msg: ImsgMessage): void => {
     if (this.stopped) return;
-    this.queue = this.queue.then(() => this.handle(msg)).catch((err: unknown) => this.fail("handle", err));
+    const key = chatKey(msg);
+    const prev = this.chains.get(key) ?? Promise.resolve();
+    if (typeof msg.id === "number") this.inflight.add(msg.id);
+    const next = prev
+      .then(() => this.recovering)
+      .then(() => this.handle(msg))
+      .catch((err: unknown) => this.fail("handle", err))
+      .finally(() => {
+        if (typeof msg.id === "number") this.inflight.delete(msg.id);
+        this.settle();
+        if (this.chains.get(key) === next) this.chains.delete(key);
+      });
+    this.chains.set(key, next);
   };
 
   private readonly onOverflow = (info: WatchOverflow): void => {
     if (this.stopped) return;
-    this.queue = this.queue.then(() => this.recover(info)).catch((err: unknown) => this.fail("overflow", err));
+    this.recovering = this.recovering
+      .then(() => this.recover(info))
+      .catch((err: unknown) => this.fail("overflow", err))
+      .finally(() => this.settle());
   };
 
   /** The watch buffer overflowed: page forward from the resume point, then subscribe again. */
@@ -173,10 +210,16 @@ export class Bridge {
     }
 
     if (msg.is_from_me) {
-      if (this.takeover.isBridgeSent(msg.guid) || this.deps.sentLedger?.has(msg.guid)) {
+      const to = normalizeHandle(msg.participants?.[0] ?? msg.chat_identifier ?? "");
+      if (this.takeover.isBridgeSent(msg.guid)) {
         this.skip(msg, sender, "bridge_sent");
+      } else if (this.deps.sentLedger?.has(msg.guid)) {
+        this.skip(msg, sender, "bridge_sent");
+        const isCard = (msg.attachments ?? []).some((a) => /\.vcf$/i.test(String(a.filename ?? a.transfer_name ?? "")));
+        this.deps.events?.ownSend?.({ handle: to, chatId: msg.chat_id, text: msg.text ?? "", card: isCard });
       } else {
         this.takeover.ownerReplied(key);
+        this.deps.events?.takeover?.({ handle: to, chatId: msg.chat_id });
         audit.write({ event: "owner_reply", guid: msg.guid, chat_id: msg.chat_id });
         log.info("owner replied from Messages; agent paused in this chat", {
           chat_id: msg.chat_id,
@@ -204,6 +247,14 @@ export class Bridge {
     const text = inboundText(msg, config.attachments, images.length);
     if (text === null) return this.skipAndAdvance(msg, sender, "empty");
 
+    this.deps.events?.inbound?.({
+      handle: sender,
+      name: typeof msg.sender_name === "string" && msg.sender_name ? msg.sender_name : undefined,
+      chatId: msg.chat_id,
+      text: (msg.text ?? "").replace(/\uFFFC/g, "").trim() || (images.length > 0 ? "📷 photo" : text),
+      images: images.length,
+    });
+    this.deps.events?.thinking?.({ handle: sender, chatId: msg.chat_id });
     const turn = await brain.reply(sender, text, msg.guid, images);
     this.stats.turns += 1;
     audit.write({
@@ -240,6 +291,7 @@ export class Bridge {
     if (this.dryRun) {
       audit.write({ event: "dry_run_card", conversation_id: conversationId, chat_id: msg.chat_id });
       log.info(`DRY RUN → would send the contact card to chat ${msg.chat_id}`);
+      this.deps.events?.card?.({ handle: sender, chatId: msg.chat_id, dryRun: true });
       return;
     }
     try {
@@ -256,6 +308,7 @@ export class Bridge {
         ...(result.guid ? { message_guid: result.guid } : {}),
       });
       log.info("sent contact card", { chat_id: msg.chat_id });
+      this.deps.events?.card?.({ handle: sender, chatId: msg.chat_id, dryRun: false });
     } catch (err) {
       audit.write({
         event: "send_failed",
@@ -282,6 +335,7 @@ export class Bridge {
       return;
     }
     if (this.dryRun) {
+      this.deps.events?.reply?.({ handle: sender, chatId: msg.chat_id, text, dryRun: true });
       this.stats.dryRunSends += 1;
       audit.write({ event: "dry_run_send", conversation_id: conversationId, chat_id: msg.chat_id, chars: text.length });
       log.info(`DRY RUN → would send to chat ${msg.chat_id}: ${text}`);
@@ -292,6 +346,7 @@ export class Bridge {
       this.takeover.markBridgeSent(result.guid);
       this.deps.sentLedger?.add(result.guid ?? "");
       this.stats.sent += 1;
+      this.deps.events?.reply?.({ handle: sender, chatId: msg.chat_id, text, dryRun: false });
       audit.write({
         event: "sent",
         conversation_id: conversationId,
@@ -313,6 +368,8 @@ export class Bridge {
   }
 
   private skip(msg: ImsgMessage, sender: string, reason: SkipReason): void {
+    if (reason !== "bridge_sent" && reason !== "duplicate" && reason !== "edit_or_unsend")
+      this.deps.events?.skipped?.({ handle: sender, reason });
     this.stats.skipped += 1;
     this.deps.audit.write({ event: "skipped", guid: msg.guid, sender: maskHandle(sender), reason });
     this.deps.log.debug("skipped", { reason, chat_id: msg.chat_id });
@@ -323,11 +380,18 @@ export class Bridge {
     this.advance(msg.id);
   }
 
+  /** A message is handled; the cursor moves in settle(), never past one still in flight. */
   private advance(rowid: number): void {
     if (typeof rowid !== "number") return;
-    if (this.state.cursorRowid === null || rowid > this.state.cursorRowid) {
+    if (this.doneMax === null || rowid > this.doneMax) this.doneMax = rowid;
+  }
+
+  private settle(): void {
+    if (this.doneMax === null) return;
+    const target = this.inflight.size > 0 ? Math.min(this.doneMax, Math.min(...this.inflight) - 1) : this.doneMax;
+    if (this.state.cursorRowid === null || target > this.state.cursorRowid) {
       const fresh = this.deps.state.load();
-      fresh.cursorRowid = rowid;
+      fresh.cursorRowid = target;
       this.deps.state.save(fresh);
       this.state = fresh;
     }
@@ -338,6 +402,7 @@ export class Bridge {
     const message = err instanceof Error ? err.message : String(err);
     this.deps.audit.write({ event: "error", where, error: message });
     this.deps.log.error(`${where} failed`, { error: message });
+    this.deps.events?.error?.({ where, message });
   }
 }
 

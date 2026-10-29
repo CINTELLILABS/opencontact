@@ -73,6 +73,12 @@ not what a personal one does. `--only <number>` restricts it while testing.
 context and sends it; the reply is answered by the running `opencontact run`. If a restriction list is set, the
 number is added to it automatically. `--dry-run` previews the opener.
 
+## Reaching out to a list
+
+`npx opencontact text --list people.csv "why"` texts everyone on a list with a phone column; names and other
+columns become details for each person. It refuses more than 50 people unless `--max` is raised. Pair it with
+`answer outbound` so the agent only talks to people it reached out to.
+
 ## Contact card
 
 Setup asks whether to send one (business name, optional logo); `npx opencontact card "Business" --logo logo.png` sets it

@@ -20,7 +20,12 @@ First public release.
 - Photos people send reach every brain except Bland. Web search for the Anthropic brain and the Claude Code
   preset.
 - Answer modes: `everyone`, `outbound` (only people the agent texted first), and a list for testing.
-- `opencontact text <number> "why"`: the agent reaches out first.
+- `opencontact text <number> "why"`: the agent reaches out first. `--list people.csv` reaches out to a whole
+  list, with names and other columns passed to the agent as details.
+- A live view for `opencontact run`: conversations as chat bubbles, typing dots while the agent works, the
+  card, and counts. `--log` keeps plain log lines.
+- Replies to different conversations run in parallel; each conversation stays in order, and the resume point
+  never passes a message still being answered.
 - Contact card: a vCard with the business name, logo, and the line's own number, sent once per contact.
 - Owner takeover, hourly caps, deduplication, a resumable cursor, a single-instance lock, and a JSONL audit log
   with masked handles.

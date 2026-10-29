@@ -7,6 +7,8 @@ export interface ConversationRef {
   openedAt: string;
   /** Opened by `opencontact text`: the agent reached out first. */
   outbound?: boolean | undefined;
+  /** A display name for this contact, when one is known (a list send, say). */
+  name?: string | undefined;
 }
 
 export interface BridgeState {

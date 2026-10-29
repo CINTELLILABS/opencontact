@@ -361,6 +361,82 @@ describe("Bridge", () => {
     expect(bland.relayed[0]?.id).toBe("conv-outbound");
   });
 
+  it("answers different chats in parallel and never moves the cursor past one still in flight", async () => {
+    const imsg = new FakeImsg();
+    const state = new MemoryStateStore();
+    const order: string[] = [];
+    let releaseSlow: () => void = () => {};
+    const slowGate = new Promise<void>((r) => {
+      releaseSlow = r;
+    });
+    const brain = {
+      kind: "command" as const,
+      acceptsImages: false,
+      async reply(handle: string, text: string) {
+        order.push(`start ${text}`);
+        if (text === "slow") await slowGate;
+        order.push(`end ${text}`);
+        return { texts: [`re: ${text}`], conversationId: `c-${handle}`, status: "active" as const };
+      },
+      async open() {
+        return { texts: [], conversationId: "x", status: "active" as const };
+      },
+      async check() {
+        return { ok: true, detail: "" };
+      },
+    };
+    const events: string[] = [];
+    const bridge = new Bridge({
+      config: config(),
+      imsg: imsg as never,
+      brain,
+      state,
+      audit: new MemoryAudit(),
+      log: silentLogger,
+      events: {
+        reply: (e) => events.push(`reply ${e.handle} ${e.text}`),
+        thinking: (e) => events.push(`thinking ${e.handle}`),
+      },
+    });
+    await bridge.start();
+    imsg.emit("message", inbound({ id: 10, chat_id: 1, chat_guid: "a", sender: "+14155550001", text: "slow" }), 1);
+    imsg.emit("message", inbound({ id: 11, chat_id: 2, chat_guid: "b", sender: "+14155550002", text: "fast" }), 1);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(order).toEqual(["start slow", "start fast", "end fast"]);
+    expect(state.load().cursorRowid ?? 0).toBeLessThan(10);
+    releaseSlow();
+    await bridge.idle();
+    expect(state.load().cursorRowid).toBe(11);
+    expect(events).toContain("reply +14155550002 re: fast");
+    expect(events).toContain("thinking +14155550001");
+  });
+
+  it("reports a send from another process as ownSend, not as the owner taking over", async () => {
+    const ledger = new MemorySentLedger();
+    ledger.add("OTHER-1");
+    const seen: string[] = [];
+    const imsg = new FakeImsg();
+    const state = new MemoryStateStore();
+    const bridge = new Bridge({
+      config: config(),
+      imsg: imsg as never,
+      brain: new BlandBrain(new FakeBland(), config(), state, new MemoryAudit(), silentLogger),
+      state,
+      audit: new MemoryAudit(),
+      log: silentLogger,
+      sentLedger: ledger,
+      events: { ownSend: (e) => seen.push(`${e.handle} ${e.text}`), takeover: () => seen.push("takeover") },
+    });
+    await bridge.start();
+    imsg.emit(
+      "message",
+      inbound({ id: 1, is_from_me: true, guid: "OTHER-1", participants: ["+14155550134"], text: "Hi Sam" }),
+      1,
+    );
+    await bridge.idle();
+    expect(seen).toEqual(["+14155550134 Hi Sam"]);
+  });
+
   it("refuses to start when the database is not readable", async () => {
     const imsg = new FakeImsg();
     imsg.statusResult = { database: { ready: false, error: "permission denied" } };

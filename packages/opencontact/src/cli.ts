@@ -48,8 +48,10 @@ import { RunLock } from "./lock.ts";
 import { createLogger, type Level } from "./log.ts";
 import { startOutbound } from "./outbound.ts";
 import { ask, askHidden, choose, confirm, interactive, paint, say, spinner } from "./prompt.ts";
+import { parseRecipients, recipientContext } from "./recipients.ts";
 import { FileStateStore } from "./state.ts";
 import { buildVCard, type ContactCard } from "./vcard.ts";
+import { formatHandle, LiveView } from "./view.ts";
 
 interface Args {
   command: string | undefined;
@@ -91,9 +93,10 @@ Put your business's AI agent behind the iMessage line on this Mac.
 
   opencontact                     first run: guided setup, then start
   opencontact setup               build an agent from your website (or pick one), permissions, go live
-  opencontact run [--live]        answer texts. Starts in dry-run; press L to go live, Q to quit
+  opencontact run [--live]        answer texts in the live view. L live · D dry-run · Q quit. --log for plain logs
   opencontact doctor [--json]     check imsg, permissions, API key, config
   opencontact text <handle> [why]  the agent reaches out first ("follow up on Thursday's quote"); --resend-card
+  opencontact text --list people.csv [why]   reach out to everyone on a list (phone[,name][,details…])
   opencontact card "<business>" [--logo file.png] [--phone <handle>]   set the contact card sent to new customers
   opencontact stop                stop a running opencontact
   opencontact brain <who>         switch who answers: bland | claude-code | codex | ollama | anthropic | openai
@@ -708,8 +711,28 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
   }
 
   const level = (flagString(args, "log-level") as Level | undefined) ?? "info";
-  const log = createLogger({ level, secrets: configSecrets(config) });
   const state = new FileStateStore(join(config.stateDir, "state.json"));
+  const names = new Map<string, string>();
+  const nameOf = (h: string) => state.load().conversations[h]?.name ?? names.get(h) ?? formatHandle(h);
+  // The live view takes the screen in a terminal; --log keeps plain log lines (and anything piped).
+  const view =
+    process.stdout.isTTY && !args.flags.has("log")
+      ? new LiveView({
+          title: "opencontact",
+          brain: describeBrain(config),
+          answers: describeAnswer(config).replace(/^only /, "only "),
+          cardName: config.contactCard?.name,
+          dryRun: config.dryRun,
+          nameOf,
+        })
+      : null;
+  const log = view
+    ? createLogger({
+        level: "warn",
+        secrets: configSecrets(config),
+        write: (line) => view.note(line.replace(/^\S+\s+/, ""), /ERROR/.test(line) ? "error" : "warn"),
+      })
+    : createLogger({ level, secrets: configSecrets(config) });
   const audit = new JsonlAudit(join(config.stateDir, "audit.jsonl"));
   const brain = createBrain(config, { state, audit, log, userAgent: `opencontact/${BRIDGE_VERSION}` });
   const sentLedger = new FileSentLedger(join(config.stateDir, "sent-guids.txt"));
@@ -721,12 +744,14 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
     fail((err as Error).message);
   }
 
-  say();
-  say(
-    `${paint.bold("opencontact")} ${BRIDGE_VERSION} · brain: ${describeBrain(config)}${contactCardPath ? ` · card: ${config.contactCard?.name}` : ""}`,
-  );
-  say(`answers: ${describeAnswer(config)}`);
-  if (config.dryRun)
+  if (!view) say();
+  if (!view)
+    say(
+      `${paint.bold("opencontact")} ${BRIDGE_VERSION} · brain: ${describeBrain(config)}${contactCardPath ? ` · card: ${config.contactCard?.name}` : ""}`,
+    );
+  if (!view) say(`answers: ${describeAnswer(config)}`);
+  if (view) view.start();
+  else if (config.dryRun)
     say(
       `${paint.yellow("DRY RUN")} · replies are shown here, nothing is sent · press ${paint.bold("L")} to go live, ${paint.bold("Q")} to quit`,
     );
@@ -734,7 +759,7 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
     say(
       `${paint.green("LIVE")} · replies go out through Messages · press ${paint.bold("D")} for dry-run, ${paint.bold("Q")} to quit`,
     );
-  say();
+  if (!view) say();
 
   let backoffMs = 1_000;
   let stopping = false;
@@ -750,6 +775,7 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
       current.rpc.close();
     }
     lock.release();
+    view?.stop();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown());
@@ -765,9 +791,11 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
       else if (k === "l" && current) {
         config.dryRun = false;
         current.bridge.setDryRun(false);
+        view?.setDryRun(false);
       } else if (k === "d" && current) {
         config.dryRun = true;
         current.bridge.setDryRun(true);
+        view?.setDryRun(true);
       }
     });
   }
@@ -784,6 +812,27 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
       log,
       sentLedger,
       contactCardPath: contactCardPath ?? undefined,
+      events: view
+        ? {
+            inbound: (e) => {
+              if (e.name) names.set(e.handle, e.name);
+              view.inbound(e.handle, e.text);
+            },
+            thinking: (e) => view.thinking(e.handle),
+            reply: (e) => view.reply(e.handle, e.text, e.dryRun),
+            card: (e) => view.card(e.handle, e.dryRun),
+            ownSend: (e) =>
+              e.card ? view.card(e.handle, false) : e.text ? view.reply(e.handle, e.text, false, true) : undefined,
+            skipped: (e) => {
+              view.done(e.handle);
+              if (e.reason === "not_allowed") view.note(`ignored ${nameOf(e.handle)}: not in the answer mode`);
+              if (e.reason === "owner_takeover") view.note(`${nameOf(e.handle)}: you have this one, agent stays quiet`);
+            },
+            takeover: (e) =>
+              view.note(`you replied to ${nameOf(e.handle)}: agent steps back for ${config.ownerTakeoverMinutes} min`),
+            error: (e) => view.note(`${e.where}: ${e.message}`, "error"),
+          }
+        : undefined,
     });
     current = { bridge, rpc };
     const exited = new Promise<void>((resolve) => rpc.once("exit", () => resolve()));
@@ -795,7 +844,11 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
     } catch (err) {
       log.error("could not start", { error: (err as Error).message });
       rpc.close();
-      if (/Full Disk Access|Automation/.test((err as Error).message)) process.exit(1);
+      if (/Full Disk Access|Automation/.test((err as Error).message)) {
+        view?.stop();
+        say(paint.red(`error: ${(err as Error).message}`));
+        process.exit(1);
+      }
     }
     if (stopping) break;
     await new Promise((r) => setTimeout(r, backoffMs));
@@ -840,67 +893,105 @@ function writeContactCard(config: BridgeConfig): string | null {
 }
 
 async function cmdText(args: Args, configPath: string): Promise<void> {
-  const handle = args.positional[0];
-  if (!handle) fail('usage: opencontact text <phone-or-email> ["why you are reaching out"]');
-  const context = args.positional.slice(1).join(" ").trim() || undefined;
+  const listPath = flagString(args, "list");
+  const handle = listPath ? undefined : args.positional[0];
+  if (!listPath && !handle)
+    fail('usage: opencontact text <phone-or-email> ["why"]   or   opencontact text --list people.csv ["why"]');
+  const why = (listPath ? args.positional : args.positional.slice(1)).join(" ").trim() || undefined;
   const loaded = loadConfig(configPath);
   if (!loaded.ok) fail(`config is not usable:\n  ${loaded.errors.join("\n  ")}\nRun \`opencontact setup\` first.`);
   const config = loaded.config;
   const dryRun = args.flags.has("dry-run");
   const log = createLogger({
-    level: (flagString(args, "log-level") as Level | undefined) ?? "info",
+    level: (flagString(args, "log-level") as Level | undefined) ?? "warn",
     secrets: configSecrets(config),
   });
-  const normalized = normalizeHandle(handle);
 
-  // A restriction list must include the person we are about to text, or their reply would be ignored.
-  if (config.allowFrom.length > 0 && !config.allowFrom.includes(normalized)) {
+  let recipients: Array<{ handle: string; name?: string | undefined; context?: string | undefined }>;
+  if (listPath) {
+    if (!existsSync(listPath)) fail(`no such file: ${listPath}`);
+    const parsed = parseRecipients(readFileSync(listPath, "utf8"));
+    const max = Number(flagString(args, "max") ?? "50");
+    if (parsed.recipients.length === 0) fail(`no phone numbers or emails found in ${listPath}`);
+    if (parsed.recipients.length > max)
+      fail(`${parsed.recipients.length} recipients is more than --max ${max}. Raise --max if you mean it.`);
+    for (const row of parsed.skipped) say(paint.yellow(`  skipping a row with no usable number: ${row}`));
+    recipients = parsed.recipients.map((r) => ({ handle: r.handle, name: r.name, context: recipientContext(why, r) }));
+    say(
+      `${paint.bold(`texting ${recipients.length} ${recipients.length === 1 ? "person" : "people"}`)}${dryRun ? paint.yellow("  (dry run)") : ""}`,
+    );
+  } else {
+    recipients = [{ handle: normalizeHandle(handle as string), context: why }];
+  }
+
+  // A restriction list must include everyone we are about to text, or their replies would be ignored.
+  if (config.answer === "list") {
     const existing = readConfigFile(configPath);
-    saveConfig(configPath, { ...existing, allowFrom: [...(existing.allowFrom ?? []), normalized] });
-    say(paint.dim(`added ${normalized} to the restriction list so the agent can answer their reply`));
+    const have = new Set((existing.allowFrom ?? []).map(normalizeHandle));
+    const added = recipients.map((r) => r.handle).filter((h) => !have.has(h));
+    if (added.length > 0) {
+      saveConfig(configPath, { ...existing, allowFrom: [...have, ...added] });
+      say(paint.dim(`added ${added.length} number(s) to the list so the agent can answer their replies`));
+    }
   }
 
   const rpc = new ImsgRpc(spawnImsg(config.imsgPath));
+  const state = new FileStateStore(join(config.stateDir, "state.json"));
+  const audit = new JsonlAudit(join(config.stateDir, "audit.jsonl"));
+  const brain = createBrain(config, { state, audit, log, userAgent: `opencontact/${BRIDGE_VERSION}` });
+  const sentLedger = new FileSentLedger(join(config.stateDir, "sent-guids.txt"));
+  const contactCardPath = writeContactCard(config) ?? undefined;
+  const cols = process.stdout.columns ?? 100;
+  let sent = 0;
+  let failed = 0;
+  let cards = 0;
   try {
-    const stop = spinner(`asking the agent to reach out to ${normalized}`);
-    const state = new FileStateStore(join(config.stateDir, "state.json"));
-    const audit = new JsonlAudit(join(config.stateDir, "audit.jsonl"));
-    const result = await startOutbound(
-      {
-        config,
-        brain: createBrain(config, { state, audit, log, userAgent: `opencontact/${BRIDGE_VERSION}` }),
-        imsg: rpc,
-        state,
-        audit,
-        log,
-        sentLedger: new FileSentLedger(join(config.stateDir, "sent-guids.txt")),
-        contactCardPath: writeContactCard(config) ?? undefined,
-        dryRun,
-        resendCard: args.flags.has("resend-card"),
-      },
-      normalized,
-      context,
-    );
-    stop(
-      dryRun
-        ? paint.yellow("dry run, nothing sent")
-        : paint.green(`sent to ${normalized}${result.cardSent ? " + contact card" : ""}`),
-    );
-    for (const t of result.sent) say(`  ${paint.dim("→")} ${t}`);
-    if (result.cardAlreadySent)
-      say(
-        paint.dim(
-          "  card not sent: this number already has it. `opencontact text … --resend-card` sends the current one.",
-        ),
-      );
-    say(
-      paint.dim(
-        `conversation ${result.conversationId}. Keep \`opencontact run\` running so the agent answers the reply.`,
-      ),
-    );
+    for (const [i, r] of recipients.entries()) {
+      const who = r.name ? `${r.name} ${paint.dim(formatHandle(r.handle))}` : formatHandle(r.handle);
+      const stop = spinner(`writing to ${r.name ?? formatHandle(r.handle)}`);
+      try {
+        const result = await startOutbound(
+          {
+            config,
+            brain,
+            imsg: rpc,
+            state,
+            audit,
+            log,
+            sentLedger,
+            contactCardPath,
+            dryRun,
+            resendCard: args.flags.has("resend-card"),
+            name: r.name,
+          },
+          r.handle,
+          r.context,
+        );
+        sent += 1;
+        if (result.cardSent) cards += 1;
+        stop(`${dryRun ? paint.yellow("○") : paint.green("✓")} ${who}${result.cardSent ? paint.dim("  + card") : ""}`);
+        for (const t of result.sent) {
+          const line = `    ${paint.dim("→")} ${t}`;
+          say(listPath && line.length > cols - 2 ? `${line.slice(0, cols - 3)}…` : line);
+        }
+        if (!listPath && result.cardAlreadySent)
+          say(paint.dim("  card not sent: this number already has it. `--resend-card` sends the current one."));
+      } catch (err) {
+        failed += 1;
+        stop(`${paint.red("✗")} ${who}  ${paint.dim((err as Error).message)}`);
+      }
+      // Space out a list so it reads like a person texting, and stays inside the send caps.
+      if (listPath && i < recipients.length - 1) await new Promise((res) => setTimeout(res, 1_200));
+    }
   } finally {
     rpc.close();
   }
+  if (listPath)
+    say(
+      `${paint.bold(`${sent} sent`)}${failed ? paint.red(` · ${failed} failed`) : ""}${cards ? ` · ${cards} cards` : ""}`,
+    );
+  say(paint.dim("Replies are answered by `opencontact run`; keep it running."));
+  if (failed > 0 && sent === 0) process.exit(1);
 }
 
 async function cmdCard(args: Args, configPath: string): Promise<void> {

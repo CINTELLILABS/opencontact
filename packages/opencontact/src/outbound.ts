@@ -20,6 +20,8 @@ export interface OutboundDeps {
   dryRun?: boolean | undefined;
   /** Send the card even if this customer already received one (after changing it, say). */
   resendCard?: boolean | undefined;
+  /** Remembered on the conversation so the live view can show it. */
+  name?: string | undefined;
 }
 
 export interface OutboundResult {
@@ -81,6 +83,7 @@ export async function startOutbound(deps: OutboundDeps, rawHandle: string, conte
       openedAt: new Date().toISOString(),
     }),
     outbound: true,
+    ...(deps.name ? { name: deps.name } : {}),
   };
   state.save(marked);
 
