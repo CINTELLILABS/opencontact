@@ -825,7 +825,6 @@ async function cmdRun(args: Args, configPath: string): Promise<void> {
               e.card ? view.card(e.handle, false) : e.text ? view.reply(e.handle, e.text, false, true) : undefined,
             skipped: (e) => {
               view.done(e.handle);
-              if (e.reason === "not_allowed") view.note(`ignored ${nameOf(e.handle)}: not in the answer mode`);
               if (e.reason === "owner_takeover") view.note(`${nameOf(e.handle)}: you have this one, agent stays quiet`);
             },
             takeover: (e) =>
