@@ -218,8 +218,11 @@ export class Bridge {
         const isCard = (msg.attachments ?? []).some((a) => /\.vcf$/i.test(String(a.filename ?? a.transfer_name ?? "")));
         this.deps.events?.ownSend?.({ handle: to, chatId: msg.chat_id, text: msg.text ?? "", card: isCard });
       } else {
+        // Only conversations the agent is part of are worth a note, and only once per pause.
+        const engaged = this.deps.state.load().conversations[to] !== undefined;
+        const alreadyPaused = this.takeover.isPaused(key);
         this.takeover.ownerReplied(key);
-        this.deps.events?.takeover?.({ handle: to, chatId: msg.chat_id });
+        if (engaged && !alreadyPaused) this.deps.events?.takeover?.({ handle: to, chatId: msg.chat_id });
         audit.write({ event: "owner_reply", guid: msg.guid, chat_id: msg.chat_id });
         log.info("owner replied from Messages; agent paused in this chat", {
           chat_id: msg.chat_id,
@@ -240,6 +243,10 @@ export class Bridge {
     });
 
     if (msg.is_group && !config.groups) return this.skipAndAdvance(msg, sender, "group_chat");
+    const sentAt = Date.parse(msg.created_at ?? "");
+    const now = this.deps.now ? this.deps.now() : Date.now();
+    if (config.maxAgeMinutes > 0 && Number.isFinite(sentAt) && now - sentAt > config.maxAgeMinutes * 60_000)
+      return this.skipAndAdvance(msg, sender, "stale");
     if (!this.allow.allows(sender)) return this.skipAndAdvance(msg, sender, "not_allowed");
     if (this.takeover.isPaused(key)) return this.skipAndAdvance(msg, sender, "owner_takeover");
 
@@ -368,7 +375,7 @@ export class Bridge {
   }
 
   private skip(msg: ImsgMessage, sender: string, reason: SkipReason): void {
-    if (reason !== "bridge_sent" && reason !== "duplicate" && reason !== "edit_or_unsend")
+    if (reason !== "bridge_sent" && reason !== "duplicate" && reason !== "edit_or_unsend" && reason !== "stale")
       this.deps.events?.skipped?.({ handle: sender, reason });
     this.stats.skipped += 1;
     this.deps.audit.write({ event: "skipped", guid: msg.guid, sender: maskHandle(sender), reason });

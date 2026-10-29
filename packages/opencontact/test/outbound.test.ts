@@ -21,6 +21,7 @@ const config: BridgeConfig = {
   maxSendsPerHour: 60,
   maxSendsPerSenderPerHour: 20,
   ownerTakeoverMinutes: 30,
+  maxAgeMinutes: 0,
   attachments: "describe",
   imsgPath: "imsg",
   stateDir: "/tmp/unused",

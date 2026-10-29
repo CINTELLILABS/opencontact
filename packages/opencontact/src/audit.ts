@@ -34,7 +34,8 @@ export type SkipReason =
   | "owner_takeover"
   | "empty"
   | "duplicate"
-  | "bridge_sent";
+  | "bridge_sent"
+  | "stale";
 
 export interface AuditSink {
   write(record: AuditEvent): void;

@@ -84,6 +84,8 @@ export interface BridgeConfig {
   maxSendsPerSenderPerHour: number;
   /** After the owner replies from Messages, the agent stays quiet in that chat for this long. */
   ownerTakeoverMinutes: number;
+  /** Texts older than this when the agent first sees them (catching up after a restart) are not answered. */
+  maxAgeMinutes: number;
   /** What to do with attachment-only inbound. */
   attachments: "describe" | "ignore";
   /** Path or command name for imsg. */
@@ -111,6 +113,7 @@ export function defaultConfig(): Omit<BridgeConfig, "apiKey" | "agentId" | "answ
     maxSendsPerHour: 60,
     maxSendsPerSenderPerHour: 20,
     ownerTakeoverMinutes: 30,
+    maxAgeMinutes: 15,
     attachments: "describe",
     imsgPath: "imsg",
     stateDir: CONFIG_DIR,
@@ -234,6 +237,7 @@ export function validateConfig(raw: unknown): Validation {
     maxSendsPerHour: posInt("maxSendsPerHour"),
     maxSendsPerSenderPerHour: posInt("maxSendsPerSenderPerHour"),
     ownerTakeoverMinutes: posInt("ownerTakeoverMinutes"),
+    maxAgeMinutes: r.maxAgeMinutes === undefined ? 15 : posInt("maxAgeMinutes"),
     attachments: attachments === "ignore" ? "ignore" : "describe",
     imsgPath: str("imsgPath") ?? "imsg",
     stateDir: str("stateDir") ?? CONFIG_DIR,

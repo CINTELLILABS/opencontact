@@ -99,6 +99,7 @@ const config = (over: Partial<BridgeConfig> = {}): BridgeConfig => ({
   maxSendsPerHour: 60,
   maxSendsPerSenderPerHour: 20,
   ownerTakeoverMinutes: 30,
+  maxAgeMinutes: 0,
   attachments: "describe",
   imsgPath: "imsg",
   stateDir: "/tmp/unused",
@@ -435,6 +436,44 @@ describe("Bridge", () => {
     );
     await bridge.idle();
     expect(seen).toEqual(["+14155550134 Hi Sam"]);
+  });
+
+  it("does not answer texts older than maxAgeMinutes when catching up", async () => {
+    const { imsg, bland, audit, bridge } = await setup({ maxAgeMinutes: 15 });
+    imsg.emit("message", inbound({ id: 1, created_at: new Date(Date.now() - 60 * 60_000).toISOString() }), 1);
+    imsg.emit("message", inbound({ id: 2, created_at: new Date().toISOString(), text: "fresh" }), 1);
+    await bridge.idle();
+    expect(bland.relayed.map((r) => r.text)).toEqual(["fresh"]);
+    expect(audit.records.some((r) => r.event === "skipped" && r.reason === "stale")).toBe(true);
+  });
+
+  it("notes a takeover only for conversations the agent is in, and once per pause", async () => {
+    const imsg = new FakeImsg();
+    const state = new MemoryStateStore();
+    state.save({
+      cursorRowid: null,
+      conversations: { "+14155551212": { conversationId: "c", agentId: AGENT, openedAt: "" } },
+      cardSentTo: [],
+    });
+    const notes: string[] = [];
+    const bridge = new Bridge({
+      config: config(),
+      imsg: imsg as never,
+      brain: new BlandBrain(new FakeBland(), config(), state, new MemoryAudit(), silentLogger),
+      state,
+      audit: new MemoryAudit(),
+      log: silentLogger,
+      events: { takeover: (e) => notes.push(e.handle) },
+    });
+    await bridge.start();
+    const mine = (id: number, to: string, guid: string) =>
+      inbound({ id, is_from_me: true, guid, participants: [to], chat_guid: `iMessage;-;${to}`, chat_identifier: to });
+    imsg.emit("message", mine(1, "+14155550188", "P1"), 1);
+    imsg.emit("message", mine(2, "+14155550188", "P2"), 1);
+    imsg.emit("message", mine(3, "+14155551212", "O1"), 1);
+    imsg.emit("message", mine(4, "+14155551212", "O2"), 1);
+    await bridge.idle();
+    expect(notes).toEqual(["+14155551212"]);
   });
 
   it("refuses to start when the database is not readable", async () => {
