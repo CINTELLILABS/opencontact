@@ -89,12 +89,12 @@ describe("LiveView", () => {
     const { v, calls } = make();
     v.inbound(SAM, "can I talk to a person?");
     v.key("\r");
-    for (const ch of "Hey Sam, it's Raj") v.key(ch);
-    expect(strip(v.lines(110, 30).at(-2) ?? "")).toContain("to Sam › Hey Sam, it's Raj");
+    for (const ch of "Hey Sam, it's Alex") v.key(ch);
+    expect(strip(v.lines(110, 30).at(-2) ?? "")).toContain("to Sam › Hey Sam, it's Alex");
     v.key("\r");
     await new Promise((r) => setTimeout(r, 0));
     expect(calls).toContain(`manual ${SAM} true`);
-    expect(calls).toContain(`send ${SAM} Hey Sam, it's Raj`);
+    expect(calls).toContain(`send ${SAM} Hey Sam, it's Alex`);
     const plain = v.lines(110, 30).map(strip).join("\n");
     expect(plain).toContain("● you have this conversation");
     expect(plain).toMatch(/Sam\s+YOU/);

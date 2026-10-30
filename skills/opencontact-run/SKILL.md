@@ -34,6 +34,9 @@ Package: `opencontact` (`npx opencontact`). Source and docs: https://github.com/
 - Node 24 or newer (`node --version`). `opencontact` installs `imsg` itself from the project's signed release build (no Homebrew or compiler needed).
 - A brain: a Bland API key and the agent's UUID (or a website to build one from), Claude Code or Codex logged in,
   Ollama running, or an Anthropic or OpenAI key.
+  No Bland key yet? `npx opencontact setup` run by the human in their own terminal signs them in through the
+  browser; or use the `opencontact-build-agent` skill. For a business with no website, a persona brain with
+  `--describe "…"` answers from the description.
 - The human can click through two System Settings prompts: Full Disk Access and Automation → Messages for
   the terminal that will run the bridge.
 

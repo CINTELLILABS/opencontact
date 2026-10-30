@@ -17,6 +17,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
+  <a href="#connect-your-account">Sign in</a> ·
   <a href="#the-agent">The agent</a> ·
   <a href="#from-your-coding-agent">Skills</a> ·
   <a href="#commands">Commands</a> ·
@@ -45,8 +46,7 @@ No new number. No carrier forms. No server.
 - **Reaches out first.** `opencontact text +1… "remind Sam about Thursday"` and the agent writes and sends the
   message, then handles the reply.
 - **Puts you in their Contacts.** With its first message the agent sends your contact card: your name, logo, and
-  number. One tap and every text after that says "Acme Dental", not a number nobody recognizes. No other open
-  source tool does this.
+  number. One tap and every text after that says "Acme Dental", not a number nobody recognizes.
 - **You can step in anytime.** Every conversation sits in one window. Open one, type, and your message goes out
   from your number while the agent steps aside; press **A** to hand it back. Replying from the Messages app works
   too. Caps, an audit log, and an outreach mode that never talks to strangers keep it safe on a real line.
@@ -75,9 +75,44 @@ opencontact text --list patients.csv "remind them about this week's appointment"
 provider) go to the agent as details for that person. Keep `opencontact run` open in another tab to watch the
 replies roll in.
 
-Setup installs [`imsg`](https://github.com/openclaw/imsg) from its signed release, walks you through the two
-macOS permissions, and starts. You need macOS 14 or later, Node 24 or later, and a Bland API key: free, no card, from
-[app.bland.ai](https://app.bland.ai/dashboard/settings). From a coding agent, the skills can sign you up inside the chat.
+Setup installs [`imsg`](https://github.com/openclaw/imsg) from its signed release, signs you in to Bland, builds
+the agent, walks you through the two macOS permissions, and starts. Each step shows its progress as it goes.
+
+**Requirements:** a Mac on macOS 14 or later, signed into Messages with the number customers text, and Node 24 or
+later.
+
+## Connect your account
+
+The default agent runs on [Bland](https://bland.ai). Setup connects it one of three ways:
+
+- **Sign in with your browser.** Setup shows a short code and opens Bland in your browser. Sign in, or sign up if
+  you are new, approve the code, and the terminal picks up an API key for your account. Nothing to copy.
+- **Paste a key.** Create one at [app.bland.ai](https://app.bland.ai/dashboard/settings) → Settings → API Keys and
+  paste it when asked.
+- **For scripts and CI,** pass `--api-key` or set `BLAND_API_KEY`.
+
+The key is saved in `~/.config/opencontact/config.json` (mode `0600`) and redacted from every log and screen.
+From a coding agent, the `opencontact-build-agent` skill can sign you up inside the chat.
+
+You don't need a Bland account at all if another brain answers: Claude Code or Codex use the login already on your
+Mac, and a local model needs nothing. See [Bring your own model](#bring-your-own-model).
+
+**No website?** Bland builds its agent from a website. Without one, create the agent in the Bland dashboard and
+pick it during setup, or describe the business to another brain:
+
+```sh
+opencontact setup --brain claude-code --name "Tony's Pizza" \
+  --describe "Pizzeria in Austin. Open 11am to 10pm, closed Mondays. Large pie \$18. Delivery within 3 miles."
+```
+
+The description becomes the persona the brain answers from, in `~/.config/opencontact/persona.md`. Edit it any time.
+
+**Your picture.** When the agent is built from a website, the contact card takes the business's logo from it. Setup
+asks whether to use a different picture, and you can change it any time:
+
+```sh
+opencontact card "Tony's Pizza" --logo ~/Desktop/logo.png
+```
 
 ## The agent
 
@@ -132,10 +167,21 @@ shorter", "never quote prices", "hand off when someone says cancel". Claude Code
 | `opencontact doctor`                      | Checks imsg, permissions, keys, config. Paste it into bug reports.    |
 | `opencontact stop`                        | Stop the running agent. Only one runs per Mac.                        |
 | `opencontact forget <number>`             | Start a contact over: a new conversation, and the card goes again. For rehearsing. |
-| `opencontact setup`                       | Run setup again. Flags for scripts: `--brain`, `--website`, `--agent`, `--answer`, `--only`, `--live`, `--yes`. |
+| `opencontact setup`                       | Run setup again. Flags for scripts: `--brain`, `--website`, `--agent`, `--describe`, `--answer`, `--only`, `--live`, `--yes`. |
 
-Requirements: macOS 14 or later, Node 24 or later. macOS asks for Full Disk Access and Automation → Messages for
-your terminal; `opencontact` tells you where to click.
+`opencontact --help` lists every flag.
+
+## Troubleshooting
+
+| You see                                   | Do this                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------------------ |
+| "Messages database not readable"          | System Settings → Privacy & Security → Full Disk Access → turn on your terminal app, then quit and reopen it. |
+| Live replies fail to send                  | System Settings → Privacy & Security → Automation → let your terminal control Messages. |
+| "opencontact is already running"          | `opencontact stop`. Only one runs per Mac, so two never answer the same text.   |
+| The agent did not answer someone          | `opencontact log` says why: answer mode, a cap, owner takeover, or a stale text. |
+| Anything else                             | `opencontact doctor`, and paste its output into an issue.                       |
+
+More in the [FAQ](docs/faq.md).
 
 ## Built to be trusted with your number
 
@@ -185,7 +231,7 @@ the business features above. Switch any time with `opencontact brain <name>`.
 | `command`     | Any program: prompt on stdin, reply on stdout                        | up to you                  | paths in the prompt   | the program              |
 
 ```sh
-opencontact brain claude-code --name "Raj"   # your existing Claude login
+opencontact brain claude-code --name "Alex"   # your existing Claude login
 opencontact answer everyone
 opencontact run --live
 ```
@@ -201,8 +247,20 @@ Messages.app ⇄ imsg rpc ⇄ opencontact ⇄ the brain (Bland, Claude Code, Cod
 
 `opencontact` watches new rows in the Messages database through `imsg`, decides whether to answer (answer mode,
 owner takeover, caps, duplicates), hands the text and any photos to the brain, and sends the reply back into the
-same chat. About 4,000 lines of TypeScript with no runtime dependencies. Start with
+same chat. About 5,000 lines of TypeScript with no runtime dependencies. Reading and sending
+iMessages is [`imsg`](https://github.com/openclaw/imsg) by Peter Steinberger; opencontact is everything around it. Start with
 [docs/architecture.md](docs/architecture.md); the Bland endpoints it calls are in [docs/bland-api.md](docs/bland-api.md).
+
+## Uninstall
+
+```sh
+opencontact stop
+rm -rf ~/.config/opencontact ~/.local/share/opencontact
+```
+
+The first holds the config, the key, conversation state and the audit log; the second holds `imsg`. Turn off the
+Full Disk Access and Automation permissions in System Settings if you granted them only for this. Your Bland
+agent stays in your Bland account.
 
 ## Contributing
 
@@ -214,7 +272,6 @@ pnpm check
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Recording a demo? [docs/demo-script.md](docs/demo-script.md) is a
 90-second take.
-
 
 ## License
 

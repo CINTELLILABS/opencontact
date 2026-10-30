@@ -8,12 +8,12 @@ answers from it and sends your contact card.
 npx opencontact
 ```
 
-That runs the guided setup (installs `imsg`, asks who should answer, walks through the macOS permissions) and
-starts. Scripted:
+That runs the guided setup (installs `imsg`, signs you in to Bland in the browser, builds the agent, walks
+through the macOS permissions) and starts. `npx opencontact acme-dental.com` does the same for that website. Scripted:
 
 ```sh
 npx opencontact setup --api-key "$BLAND_API_KEY" --website https://acme-dental.com --yes   # Bland, dry-run
-npx opencontact setup --brain claude-code --name "Raj" --yes                              # your Claude login
+npx opencontact setup --brain claude-code --name "Alex" --describe "…" --yes              # your Claude login
 npx opencontact run --live
 ```
 
@@ -25,9 +25,12 @@ Codex, and the safety model are in the [repository README](https://github.com/CI
 | Command                        | What it does                                                     |
 | ------------------------------ | ---------------------------------------------------------------- |
 | `setup`                        | Guided or flag-driven setup; writes `~/.config/opencontact/config.json` (mode 0600). |
+| `<website>`                    | Setup that builds the agent, and a card with its name and logo, from this site. |
 | `doctor [--json]`              | Check platform, imsg, Full Disk Access, Automation, API key.     |
 | `run [--live\|--dry-run]`      | Watch Messages and relay to the agent. L live, D dry-run, Q quit. Restarts imsg if it dies. |
-| `text <number> "why"`          | The agent reaches out first, then sends the card.                |
+| `text <number> "why"`          | The agent reaches out first, then sends the card. `--name`, `--resend-card`. |
+| `text --list people.csv "why"` | Reach out to everyone on a list; other columns become details.  |
+| `forget <number>`              | Start a contact over: new conversation, card sent again.         |
 | `answer everyone\|outbound`    | Answer anyone, or only people the agent texted first.            |
 | `only <handle…>` / `everyone`  | Answer only these handles while testing, or go back.             |
 | `brain <name>`                 | Switch who answers.                                              |
@@ -59,7 +62,7 @@ Environment overrides: `BLAND_API_KEY`, `BLAND_AGENT_ID`, `BLAND_API_URL`, `ANTH
 ```
 
 A persona brain looks like `{ "kind": "anthropic", "apiKey": "…", "model": "claude-opus-5-5", "personaPath":
-"~/.config/opencontact/persona.md", "personaName": "Raj" }`. State (`state.json`), transcripts, and the audit log
+"~/.config/opencontact/persona.md", "personaName": "Alex" }`. State (`state.json`), transcripts, and the audit log
 (`audit.jsonl`) live in `stateDir`.
 
 ## Programmatic use

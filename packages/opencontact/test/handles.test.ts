@@ -29,9 +29,9 @@ describe("inferOwnHandle", () => {
     const chats = [
       { last_addressed_handle: "+1 (415) 555-7458" },
       { last_addressed_handle: "+14155557458" },
-      { last_addressed_handle: "raj@example.com" },
-      { last_addressed_handle: "raj@example.com" },
-      { last_addressed_handle: "raj@example.com" },
+      { last_addressed_handle: "alex@example.com" },
+      { last_addressed_handle: "alex@example.com" },
+      { last_addressed_handle: "alex@example.com" },
       {},
     ];
     expect(inferOwnHandle(chats)).toBe("+14155557458");
