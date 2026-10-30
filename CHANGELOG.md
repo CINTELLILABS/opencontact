@@ -10,6 +10,8 @@ First public release.
 
 ### Added
 
+- Setup screens: numbered steps, live tasks with a timer, a progress bar while the agent builds, the agent's
+  scenarios and a preview of the contact card in panels, and a summary with the next commands.
 - `npx opencontact <website>`: one command from a URL to a live agent. The contact card takes the business's name
   and its logo from the site (Apple touch icon, then favicon, then `og:image`; PNG or JPEG only).
 - `opencontact text --name`, passed to Bland as the contact's name; `opencontact forget <number>` to rehearse from scratch.

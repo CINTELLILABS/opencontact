@@ -13,6 +13,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { JsonlAudit } from "./audit.ts";
 import { BlandApiError, BlandClient } from "./bland.ts";
@@ -52,6 +53,7 @@ import { ask, askHidden, choose, confirm, interactive, paint, say, spinner } fro
 import { parseRecipients, recipientContext } from "./recipients.ts";
 import { fetchSiteLogo } from "./site-logo.ts";
 import { FileStateStore } from "./state.ts";
+import * as ui from "./ui.ts";
 import { buildVCard, type ContactCard } from "./vcard.ts";
 import { formatHandle, LiveView } from "./view.ts";
 
@@ -158,15 +160,13 @@ async function ensureImsg(imsgPath: string, yes: boolean): Promise<string | null
   if (!(yes || (await confirm("Install it now?", true)))) return null;
 
   // Prefer the project's signed release build: no compiler, no Command Line Tools, ~4 MB.
-  const stop = spinner("installing imsg");
+  const install = ui.task("Installing imsg from its signed release");
   try {
-    const r = await installImsgFromRelease({
-      report: (step) => process.stderr.write(process.stderr.isTTY ? `\r\x1b[2K⠿ ${step}` : `  ${step}\n`),
-    });
-    stop(paint.green(`     ✓ ${r.version} (${r.path})`));
+    const r = await installImsgFromRelease({ report: (step) => install.detail(step) });
+    install.done(`imsg ${r.version} installed`);
     return r.path;
   } catch (err) {
-    stop(paint.yellow(`     release download failed: ${(err as Error).message}`));
+    install.warn(`release download failed: ${(err as Error).message}`);
   }
 
   // Fall back to Homebrew, which builds from source.
@@ -177,17 +177,17 @@ async function ensureImsg(imsgPath: string, yes: boolean): Promise<string | null
     );
     return null;
   }
-  const stop2 = spinner("brew install steipete/tap/imsg (builds from source; may take a few minutes)");
+  const brewing = ui.task("brew install steipete/tap/imsg (builds from source; may take a few minutes)");
   const r = spawnSync("brew", ["install", "steipete/tap/imsg"], {
     stdio: ["ignore", "ignore", "pipe"],
     encoding: "utf8",
   });
   if (r.status !== 0) {
-    stop2(paint.red("✗ brew install failed"));
+    brewing.fail("brew install failed");
     say(paint.dim((r.stderr ?? "").trim().split("\n").slice(-6).join("\n")));
     return null;
   }
-  stop2();
+  brewing.done("imsg installed with Homebrew");
   return imsgVersion(imsgPath) ? imsgPath : null;
 }
 
@@ -208,6 +208,8 @@ async function probeImsg(
   }
 }
 
+const SETUP_STEPS = 5;
+
 async function cmdSetup(args: Args, configPath: string): Promise<void> {
   const yes = args.flags.has("yes");
   const existing = readConfigFile(configPath);
@@ -217,20 +219,17 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
   const apiUrl = flagString(args, "api-url") ?? process.env.BLAND_API_URL ?? next.apiUrl ?? "https://api.bland.ai";
   next.apiUrl = apiUrl;
 
-  say();
-  say(paint.bold("opencontact — Contacts In Your Phone"));
-  say(paint.dim("Your customers already text this Mac's number. Let's put your agent behind it."));
-  say();
+  ui.banner(BRIDGE_VERSION, "Your business's AI agent, on the number customers already text.");
 
   // 1. imsg
-  say(paint.bold("1/4  imsg"));
+  ui.stepHeader(1, SETUP_STEPS, "Messages on this Mac");
   const resolvedImsg = await ensureImsg(imsgPath, yes);
   if (!resolvedImsg) fail("imsg is required. Install it and run `opencontact setup` again.");
   next.imsgPath = resolvedImsg;
-  say(paint.green(`     ✓ ${imsgVersion(resolvedImsg)}`));
+  ui.ok(`imsg ${imsgVersion(resolvedImsg)?.replace(/^imsg\s+/, "")} reads and sends your iMessages`);
 
   // 2. Who answers
-  say(paint.bold("2/4  Who answers"));
+  ui.stepHeader(2, SETUP_STEPS, "Who answers the texts");
   type Choice = BrainConfig["kind"] | BrainPreset;
   let choice = (flagString(args, "brain") ??
     next.brain?.label?.match(/^preset:(\S+)/)?.[1] ??
@@ -308,19 +307,19 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
     }
     const bland = new BlandClient({ apiUrl, apiKey, timeoutMs: 20_000, userAgent: `opencontact/${BRIDGE_VERSION}` });
     {
-      const stop = spinner("checking the key");
+      const check = ui.task("Checking your Bland key");
       try {
         await bland.me();
-        stop(paint.green("     ✓ key accepted"));
+        check.done("Bland key accepted");
       } catch (err) {
-        stop(paint.red("     ✗ key rejected"));
+        check.fail("Bland rejected the key");
         fail(err instanceof BlandApiError ? `${err.status} ${err.code}: ${err.message}` : (err as Error).message);
       }
     }
     next.apiKey = apiKey;
 
     // 3. Agent
-    say(paint.bold("3/4  Your agent"));
+    ui.stepHeader(3, SETUP_STEPS, "Your agent");
     let agentId = flagString(args, "agent") ?? process.env.BLAND_AGENT_ID ?? "";
     const website = flagString(args, "website");
     if (!agentId && website) {
@@ -336,9 +335,10 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       );
       if (choice === "keep current" && existing.agentId) agentId = existing.agentId;
       else if (choice.toLowerCase() === "pick" || choice === "") {
-        const stop = spinner("loading your agents");
+        const loading = ui.task("Loading your agents");
         const agents = await bland.listAgents().catch(() => []);
-        stop(agents.length ? `     ${agents.length} agent(s)` : paint.yellow("     no agents found"));
+        if (agents.length > 0) loading.done(`${agents.length} agent${agents.length === 1 ? "" : "s"}`);
+        else loading.warn("no agents yet");
         if (agents.length === 0) {
           const url = await ask("     Your business website");
           if (!url) fail("need a website or an agent id (--website or --agent).");
@@ -356,7 +356,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       }
     }
     next.agentId = agentId;
-    say(paint.green(`     ✓ agent ${agentId}`));
+    if (!builtFrom) ui.ok(`agent ${agentName || agentId}`);
   } else {
     // A persona brain: a key or a command, a name, and a persona file the user can edit.
     if (!agentName) agentName = await ask("     Who does it speak for? (a business or a person)", "the business");
@@ -452,21 +452,21 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       log: createLogger({ level: "error" }),
       userAgent: `opencontact/${BRIDGE_VERSION}`,
     });
-    const stop = spinner(`checking ${brainKind}`);
+    const probing = ui.task(`Checking ${brainKind}`);
     const r = await probe.check();
     if (!r.ok) {
-      stop(paint.red(`     ✗ ${r.detail}`));
+      probing.fail(r.detail);
       fail(`${brainKind} is not usable yet`);
     }
-    stop(paint.green(`     ✓ ${r.detail}`));
+    probing.done(r.detail);
     loadPersona(personaPath, agentName);
-    say(paint.bold("3/4  Persona"));
-    say(`     ${personaPath}`);
-    say(paint.dim("     Edit it any time; it is the whole brief. Replies pick up the change on the next text."));
+    ui.stepHeader(3, SETUP_STEPS, "Persona");
+    ui.ok(personaPath);
+    say(paint.dim("    Edit it any time; it is the whole brief. Replies pick up the change on the next text."));
   }
 
   // 4. Who it may answer: everyone, unless the user wants to try it alone first.
-  say(paint.bold("4/4  Who it answers"));
+  ui.stepHeader(4, SETUP_STEPS, "Who it answers");
   const only = [...(args.multi.get("only") ?? []), ...(args.multi.get("allow") ?? []), ...args.positional].map(
     normalizeHandle,
   );
@@ -503,23 +503,24 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       : next.answer === "outbound"
         ? "only people the agent texts first"
         : `only ${(next.allowFrom ?? []).join(", ") || "(nobody: the list is empty)"}`;
-  say(paint.green(`     ✓ answers ${who}`));
+  ui.ok(`answers ${who}`);
 
   // Contact card: the business shows up in the customer's Contacts with a name and logo.
-  if (args.flags.has("no-card")) next.contactCard = undefined;
-  else {
+  ui.stepHeader(5, SETUP_STEPS, "Contact card");
+  if (args.flags.has("no-card")) {
+    next.contactCard = undefined;
+    ui.ok("no card");
+  } else {
     const cardName = flagString(args, "card-name");
     const cardPhone = flagString(args, "card-phone");
     const cardLogo = flagString(args, "card-logo");
     if (builtFrom && !cardName && !cardLogo) {
       // A new business: its own name, its own logo from its site, the same line.
-      const stop = spinner(`     taking the logo from ${new URL(builtFrom).hostname}`);
+      const host = new URL(builtFrom).hostname;
+      const taking = ui.task(`Taking the logo from ${host}`);
       const logo = await fetchSiteLogo(builtFrom, join(CONFIG_DIR, "assets"));
-      stop(
-        logo
-          ? paint.green("     ✓ logo from the website")
-          : paint.dim("     no logo on the site; the card goes without one"),
-      );
+      if (logo) taking.done(`logo from ${host}`);
+      else taking.warn(`${host} has no logo a card can use; the card goes without one`);
       next.contactCard = {
         name: agentName,
         phone: cardPhone ?? next.contactCard?.phone,
@@ -533,8 +534,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
         photoPath: cardLogo ?? next.contactCard?.photoPath,
       };
     } else if (!next.contactCard && interactive()) {
-      say(paint.bold("+    Contact card"));
-      say("     After its first reply, the agent can send a contact card so customers save you by name, with a logo.");
+      say("    After its first text, the agent can send a contact card so customers save you by name, with a logo.");
       if (await confirm("     Send one?", true)) {
         const name = await ask("     Business name on the card", agentName || undefined);
         const own = await detectOwnHandle(resolvedImsg);
@@ -558,8 +558,20 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       say(paint.yellow(`     logo ${next.contactCard.photoPath} not found; card goes out without a photo`));
       next.contactCard = { ...next.contactCard, photoPath: undefined };
     }
-    if (next.contactCard)
-      say(paint.green(`     ✓ card: ${next.contactCard.name}${next.contactCard.photoPath ? " with logo" : ""}`));
+    const card = next.contactCard;
+    if (card)
+      ui.panel("What customers save", [
+        ui.field("name", ui.tone.bold(card.name)),
+        ui.field(
+          "number",
+          card.phone ? formatHandle(card.phone) : ui.tone.yellow("none yet: opencontact card --phone +1…"),
+        ),
+        ...(card.url ? [ui.field("website", card.url.replace(/^https?:\/\//, ""))] : []),
+        ui.field("photo", card.photoPath ? describeLogo(card.photoPath) : ui.tone.dim("none")),
+        "",
+        ui.tone.dim("Sent once to each person, right after the agent's first text."),
+      ]);
+    else ui.ok("no card");
   }
 
   const check = resolveConfig(next, {});
@@ -573,7 +585,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
     store.save(st);
   }
   say();
-  say(paint.dim(`saved ${configPath} (mode 0600)`));
+  say(paint.dim(`  saved ${configPath.replace(homedir(), "~")} (mode 0600)`));
 
   // Permissions, with a retry loop so the user can grant them and continue.
   if (!(await ensurePermissions(resolvedImsg, yes))) {
@@ -582,8 +594,14 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
     process.exit(1);
   }
 
-  say();
-  say(`${paint.bold("Ready.")} Text this Mac's number from your phone.`);
+  const own = next.contactCard?.phone;
+  ui.panel("Ready", [
+    `Text ${own ? ui.tone.bold(formatHandle(own)) : "this Mac's number"} from another phone and the agent answers.`,
+    "",
+    ui.field("reach out", 'opencontact text +1… --name Sam "why"'),
+    ui.field("a list", 'opencontact text --list people.csv "why"'),
+    ui.field("status", "opencontact status"),
+  ]);
   if (args.flags.has("no-start")) return;
   if (!interactive() || yes) {
     say(`Starting in ${paint.bold(next.dryRun ? "dry-run" : "live")} mode.`);
@@ -603,22 +621,64 @@ function websiteUrl(website: string): string {
   return /^https?:\/\//.test(website) ? website : `https://${website}`;
 }
 
+// What a build is doing, roughly, by how long it has run. A build usually takes a minute or two.
+const BUILD_PHASES: Array<[number, string]> = [
+  [0, "reading {host}"],
+  [12, "finding what customers come to {host} for"],
+  [30, "writing a scenario for each one"],
+  [70, "checking each scenario against the site"],
+  [110, "publishing the agent"],
+];
+const BUILD_EXPECTED_SECONDS = 90;
+
 async function buildFromWebsite(bland: BlandClient, website: string): Promise<{ id: string; name: string }> {
   const url = websiteUrl(website);
-  const stop = spinner(`reading ${url} and writing your agent (about a minute)`);
+  const host = new URL(url).hostname.replace(/^www\./, "");
+  const building = ui.task(`Building an agent from ${host}`);
+  const started = Date.now();
+  const tick = setInterval(() => {
+    const s = (Date.now() - started) / 1000;
+    const phase = [...BUILD_PHASES].reverse().find(([at]) => s >= at)?.[1] ?? "";
+    // Eases toward the end without claiming to arrive; the result finishes the bar.
+    building.progress(1 - Math.exp(-s / BUILD_EXPECTED_SECONDS));
+    building.detail(phase.replace("{host}", host));
+  }, 250);
+  tick.unref();
   try {
+    // A gateway timeout mid-build is retried inside generateAgent; the user just sees the build continue.
     const agent = await bland.generateAgent(url, randomUUID().replace(/-/g, "").slice(0, 32));
-    stop(paint.green(`     ✓ ${agent.name}`));
-    say(paint.dim(`     ${agent.summary}`));
-    say(
-      paint.dim(
-        `     ${Array.isArray(agent.scenarios) ? agent.scenarios.length : 0} scenarios · edit any time at https://app.bland.ai`,
-      ),
-    );
+    clearInterval(tick);
+    building.done(`built ${ui.tone.bold(agent.name)}`);
+    const scenarios = Array.isArray(agent.scenarios) ? agent.scenarios.filter((x) => typeof x === "string") : [];
+    ui.panel(agent.name, [
+      agent.summary,
+      "",
+      ...(scenarios.length > 0
+        ? [
+            ui.tone.dim(`Handles ${scenarios.length} things customers ask for:`),
+            ...scenarios.map((n) => `  ${ui.tone.accent("•")} ${n}`),
+            "",
+          ]
+        : []),
+      ui.tone.dim("Edit it any time at app.bland.ai"),
+    ]);
     return { id: agent.agent_id, name: agent.name };
   } catch (err) {
-    stop(paint.red("     ✗ could not build the agent"));
+    clearInterval(tick);
+    building.fail(`could not build an agent from ${host}`);
     fail(err instanceof BlandApiError ? `${err.status} ${err.code}: ${err.message}` : (err as Error).message);
+  }
+}
+
+/** "PNG 180×180 logo" */
+function describeLogo(path: string): string {
+  try {
+    const head = readFileSync(path).subarray(0, 24);
+    const png = head[0] === 0x89 && head[1] === 0x50;
+    const size = png ? ` ${head.readUInt32BE(16)}×${head.readUInt32BE(20)}` : "";
+    return `${png ? "PNG" : "JPEG"}${size} logo`;
+  } catch {
+    return "logo";
   }
 }
 
@@ -626,13 +686,9 @@ async function ensurePermissions(imsgPath: string, yes: boolean): Promise<boolea
   for (let attempt = 1; attempt <= 4; attempt++) {
     const p = await probeImsg(imsgPath);
     if (p.ready) {
-      say(paint.green("✓ Messages database readable"));
+      ui.ok("can read Messages");
       if (!p.canSend)
-        say(
-          paint.yellow(
-            "! Sending is not confirmed yet. macOS will ask for Automation → Messages on the first live send; click Allow.",
-          ),
-        );
+        ui.caution("macOS will ask to let this terminal control Messages on the first live send; click Allow.");
       return true;
     }
     say();
