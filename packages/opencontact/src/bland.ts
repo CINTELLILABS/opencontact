@@ -109,13 +109,33 @@ export class BlandClient implements BlandApi {
   }
 
   /** Read a website and publish an agent for it. Takes up to a minute or two. */
-  async generateAgent(website: string, requestId: string): Promise<GeneratedAgent> {
-    return (await this.call(
-      "POST",
-      "/v2/agents/generate",
-      { website, request_id: requestId },
-      240_000,
-    )) as GeneratedAgent;
+  /**
+   * Build an agent from a website. A build takes a minute or more, longer than
+   * a gateway holds a request open, so a 502/503/504 or a dropped connection is
+   * retried with the same request_id: the server keeps building and answers the
+   * retry with that same agent once it exists.
+   */
+  async generateAgent(
+    website: string,
+    requestId: string,
+    opts: { deadlineMs?: number; retryDelayMs?: number; onRetry?: (attempt: number) => void } = {},
+  ): Promise<GeneratedAgent> {
+    const deadline = Date.now() + (opts.deadlineMs ?? 8 * 60_000);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return (await this.call(
+          "POST",
+          "/v2/agents/generate",
+          { website, request_id: requestId },
+          240_000,
+        )) as GeneratedAgent;
+      } catch (err) {
+        const transient = err instanceof BlandApiError && [0, 502, 503, 504].includes(err.status);
+        if (!transient || Date.now() >= deadline) throw err;
+        opts.onRetry?.(attempt);
+        await new Promise((r) => setTimeout(r, opts.retryDelayMs ?? 3_000));
+      }
+    }
   }
 
   async openChat(input: OpenChatInput): Promise<ChatConversation> {

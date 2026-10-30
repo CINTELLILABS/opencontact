@@ -13,6 +13,34 @@ function fakeFetch(handler: (url: string, init: RequestInit) => { status: number
 }
 
 describe("BlandClient", () => {
+  it("retries a gateway timeout on agent generation with the same request_id", async () => {
+    let n = 0;
+    const { fetch, calls } = fakeFetch(() =>
+      ++n < 3
+        ? { status: 504, body: { message: "Gateway Timeout" } }
+        : { status: 201, body: { data: { agent_id: "a1", name: "Acme Dental", scenarios: ["Book"] }, errors: null } },
+    );
+    const c = new BlandClient({ apiUrl: "https://api.test", apiKey: "k", fetch });
+    const retries: number[] = [];
+    const agent = await c.generateAgent("https://acme.test", "req12345", {
+      retryDelayMs: 0,
+      onRetry: (a) => retries.push(a),
+    });
+    expect(agent.agent_id).toBe("a1");
+    expect(retries).toEqual([1, 2]);
+    expect(calls.map((c) => JSON.parse(String(c.init.body)).request_id)).toEqual(["req12345", "req12345", "req12345"]);
+  });
+
+  it("does not retry a generation the server refused", async () => {
+    const { fetch, calls } = fakeFetch(() => ({
+      status: 422,
+      body: { data: null, errors: [{ error: "GENERATION_FAILED", message: "site unreachable" }] },
+    }));
+    const c = new BlandClient({ apiUrl: "https://api.test", apiKey: "k", fetch });
+    await expect(c.generateAgent("https://x.test", "req12345", { retryDelayMs: 0 })).rejects.toThrow(BlandApiError);
+    expect(calls).toHaveLength(1);
+  });
+
   it("opens a chat with the contact link and unwraps the envelope", async () => {
     const { fetch, calls } = fakeFetch(() => ({
       status: 200,

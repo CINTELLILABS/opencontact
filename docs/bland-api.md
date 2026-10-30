@@ -72,7 +72,7 @@ bridge reopens and retries once.
 End with the same post-conversation analysis a text gets; read the conversation and transcript. The
 bridge does not call these; the `opencontact-build-agent` skill uses them for testing.
 
-## Agent generation (used by the `opencontact-build-agent` skill)
+## Agent generation (used by `opencontact setup` and the `opencontact-build-agent` skill)
 
 ### `POST /v2/agents/generate`
 
@@ -80,6 +80,11 @@ bridge does not call these; the `opencontact-build-agent` skill uses them for te
 `{ agent_id, version_id, name, summary, scenarios, website }`. Reads the site, writes and publishes a v2
 agent in reasoning mode for messaging. Same `request_id` returns the first result. Rate limited to 20 per
 org per hour. Requires an API key that may edit agents.
+
+A build takes a minute or two, which can outlast the gateway in front of the API: the client then gets a
+`504` while the server keeps building. `setup` sends the same `request_id` again on a `502`, `503`, `504` or a
+dropped connection, for up to eight minutes; the server answers with the agent once the first build finishes.
+Scenarios come back as names (`string[]`), which `setup` lists.
 
 ## Account
 
