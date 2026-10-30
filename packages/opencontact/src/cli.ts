@@ -48,6 +48,7 @@ import { installedReleaseImsg, installImsgFromRelease } from "./install-imsg.ts"
 import { FileSentLedger } from "./ledger.ts";
 import { RunLock } from "./lock.ts";
 import { createLogger, type Level } from "./log.ts";
+import { type BrowserLogin, startBrowserLogin, waitForApproval } from "./login.ts";
 import { startOutbound } from "./outbound.ts";
 import { ask, askHidden, choose, confirm, interactive, paint, say, spinner } from "./prompt.ts";
 import { parseRecipients, recipientContext } from "./recipients.ts";
@@ -117,10 +118,10 @@ Put your business's AI agent behind the iMessage line on this Mac.
 Setup flags (all optional; prompts fill in the rest):
   --brain <who>        bland (default) | claude-code | codex | ollama | anthropic | openai | command
                        claude-code / codex run the official CLIs with your existing login; ollama is local and free
-  --api-key <key>  --website <url> | --agent <uuid>              bland: Bland key, build from a site or pick an agent
+  --api-key <key>  --website <url> | --agent <uuid>              bland: without a key, setup signs you in in the browser
   --anthropic-key <key> | --openai-key <key>  --model <id>        your own key; persona in ~/.config/opencontact/persona.md
   --command "<cmd>"                           any program: prompt on stdin, reply on stdout (e.g. claude -p "...")
-  --persona <file>  --name "<who it speaks for>"
+  --persona <file>  --name "<who it speaks for>"  --describe "<what it does, hours, prices>"
   --only <handle> (repeatable)  --live  --yes
   --card-name <business>  --card-phone <handle>  --card-logo <png|jpg>  --no-card
 
@@ -298,11 +299,16 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
     next.brain = { kind: "bland" };
     let apiKey = flagString(args, "api-key") ?? process.env.BLAND_API_KEY ?? existing.apiKey ?? "";
     if (!apiKey) {
-      say(
-        "     A Bland API key runs the agent. Get one in 30 seconds at " +
-          paint.bold("https://app.bland.ai/dashboard/settings"),
+      if (!interactive()) fail("no Bland API key. Pass --api-key or set BLAND_API_KEY.");
+      const how = await choose(
+        "    Connect your Bland account",
+        [
+          { k: "browser" as const, label: "Sign in with your browser (new to Bland? you can sign up there)" },
+          { k: "paste" as const, label: "Paste an API key from app.bland.ai → Settings → API Keys" },
+        ],
+        (o) => o.label,
       );
-      apiKey = await askHidden("     Paste it (hidden)");
+      apiKey = how?.k === "paste" ? await askHidden("    API key (hidden)") : await signInWithBrowser(apiUrl);
       if (!apiKey) fail("no API key. Pass --api-key or set BLAND_API_KEY.");
     }
     const bland = new BlandClient({ apiUrl, apiKey, timeoutMs: 20_000, userAgent: `opencontact/${BRIDGE_VERSION}` });
@@ -350,6 +356,10 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
           agentId = picked.id;
           agentName = picked.name;
         }
+      } else if (/\s/.test(choice.trim()) || !/\.[a-z]{2,}/i.test(choice)) {
+        fail(
+          'Bland builds an agent from a website. Without one, create the agent at app.bland.ai and pick it here, or run `opencontact setup --brain claude-code --describe "…"` to answer from a description.',
+        );
       } else {
         ({ id: agentId, name: agentName } = await buildFromWebsite(bland, choice));
         builtFrom = websiteUrl(choice);
@@ -359,7 +369,11 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
     if (!builtFrom) ui.ok(`agent ${agentName || agentId}`);
   } else {
     // A persona brain: a key or a command, a name, and a persona file the user can edit.
-    if (!agentName) agentName = await ask("     Who does it speak for? (a business or a person)", "the business");
+    if (!agentName) agentName = await ask("    Who does it speak for? (a business or a person)", "the business");
+    // A description instead of a website: it becomes the persona the brain answers from.
+    let about = flagString(args, "describe");
+    if (!about && !existsSync(personaPath) && interactive())
+      about = await ask("    Describe it: what it does, hours, prices, what to say (or Enter to write it later)");
     if (brainKind === "anthropic") {
       let key =
         flagString(args, "anthropic-key") ??
@@ -459,7 +473,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       fail(`${brainKind} is not usable yet`);
     }
     probing.done(r.detail);
-    loadPersona(personaPath, agentName);
+    loadPersona(personaPath, agentName, about || undefined);
     ui.stepHeader(3, SETUP_STEPS, "Persona");
     ui.ok(personaPath);
     say(paint.dim("    Edit it any time; it is the whole brief. Replies pick up the change on the next text."));
@@ -520,12 +534,17 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       const taking = ui.task(`Taking the logo from ${host}`);
       const logo = await fetchSiteLogo(builtFrom, join(CONFIG_DIR, "assets"));
       if (logo) taking.done(`logo from ${host}`);
-      else taking.warn(`${host} has no logo a card can use; the card goes without one`);
+      else taking.warn(`${host} has no logo a card can use`);
+      const own = interactive()
+        ? await ask(
+            `    ${logo ? "Use a different picture?" : "Add a picture?"} Path to a PNG or JPEG, or Enter to ${logo ? "keep it" : "skip"}`,
+          )
+        : "";
       next.contactCard = {
         name: agentName,
         phone: cardPhone ?? next.contactCard?.phone,
         url: builtFrom,
-        photoPath: logo ?? undefined,
+        photoPath: localPath(own) || logo || undefined,
       };
     } else if (cardName || cardPhone || cardLogo) {
       next.contactCard = {
@@ -631,6 +650,32 @@ const BUILD_PHASES: Array<[number, string]> = [
 ];
 const BUILD_EXPECTED_SECONDS = 90;
 
+/** Bland's device flow: show a code, open the approval page, wait for the owner to approve it. */
+async function signInWithBrowser(apiUrl: string): Promise<string> {
+  let login: BrowserLogin;
+  try {
+    login = await startBrowserLogin(apiUrl);
+  } catch (err) {
+    ui.caution(`browser sign-in is not available right now (${(err as Error).message}); paste a key instead`);
+    return askHidden("    API key (hidden)");
+  }
+  ui.panel("Sign in with Bland", [
+    `Your code  ${ui.tone.bold(ui.tone.accent(login.userCode))}`,
+    "",
+    "Approve it in the browser window that just opened. If none opened, go to:",
+    ui.tone.blue(login.url),
+  ]);
+  spawnSync("open", [login.url], { stdio: "ignore" });
+  const waiting = ui.task("Waiting for you to approve the code in the browser");
+  const outcome = await waitForApproval(apiUrl, login);
+  if (outcome.status !== "approved") {
+    waiting.fail("the code expired before it was approved");
+    return "";
+  }
+  waiting.done("signed in to Bland");
+  return outcome.apiKey;
+}
+
 async function buildFromWebsite(bland: BlandClient, website: string): Promise<{ id: string; name: string }> {
   const url = websiteUrl(website);
   const host = new URL(url).hostname.replace(/^www\./, "");
@@ -668,6 +713,15 @@ async function buildFromWebsite(bland: BlandClient, website: string): Promise<{ 
     building.fail(`could not build an agent from ${host}`);
     fail(err instanceof BlandApiError ? `${err.status} ${err.code}: ${err.message}` : (err as Error).message);
   }
+}
+
+/** A path as people type or drag it into Terminal: quoted, with escaped spaces, or starting with ~. */
+function localPath(typed: string): string {
+  return typed
+    .trim()
+    .replace(/^(['"])(.*)\1$/, "$2")
+    .replace(/\\ /g, " ")
+    .replace(/^~(?=\/)/, homedir());
 }
 
 /** "PNG 180×180 logo" */

@@ -86,6 +86,25 @@ A build takes a minute or two, which can outlast the gateway in front of the API
 dropped connection, for up to eight minutes; the server answers with the agent once the first build finishes.
 Scenarios come back as names (`string[]`), which `setup` lists.
 
+## Sign-in (device flow, used by `opencontact setup`)
+
+Both calls are public; the owner proves who they are in the browser.
+
+### `POST /v1/agent/onboarding/start`
+
+`{ "client_name": "opencontact" }` → `{ device_code, user_code, verification_url, verification_url_complete,
+expires_in, interval }`. `user_code` looks like `PVT7-W7TV`; `verification_url_complete` is
+`https://app.bland.ai/agent-setup?code=…`, which setup opens. Codes last 15 minutes (`expires_in: 900`) and the
+poll interval is 5 seconds. Checked against production on 2026-10-29.
+
+### `POST /v1/agent/onboarding/poll`
+
+`{ "device_code": "…" }` → `{ status: "pending", interval, expires_in }`, `{ status: "expired" }`, or
+`{ status: "approved", api_key, org_id, phone_number, plan, client_name }` once, after the owner approves the code
+at the URL. Setup keeps the `api_key` and nothing else. Approving needs an admin or owner of the org; an org without
+the Agent Phone Plan is offered the plan on the approval page, and can continue without it only when Bland allows
+that (the `agent_onboarding_skip_plan` gate).
+
 ## Account
 
 ### `GET /v1/me`

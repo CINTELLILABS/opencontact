@@ -236,3 +236,12 @@ describe("CommandBrain", () => {
     ).toBe(false);
   });
 });
+
+describe("DEFAULT_PERSONA", () => {
+  it("carries a description of the business when one is given", () => {
+    expect(DEFAULT_PERSONA("Tony's Pizza")).not.toContain("## About");
+    expect(DEFAULT_PERSONA("Tony's Pizza", "Open 11 to 10. Large pie $18.")).toContain(
+      "## About Tony's Pizza\n\nOpen 11 to 10. Large pie $18.",
+    );
+  });
+});

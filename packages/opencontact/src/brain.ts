@@ -172,13 +172,13 @@ function contactFor(handle: string): { phone_number?: string; email?: string; na
 // ---------------------------------------------------------------------------
 // Persona + transcript, shared by the BYO brains
 
-export const DEFAULT_PERSONA = (name: string) => `# Persona
+export const DEFAULT_PERSONA = (name: string, about?: string) => `# Persona
 
 You answer text messages on behalf of ${name}. You are texting, so keep replies short: one to three
 sentences, warm, specific, no bullet points, no markdown. Match the other person's tone. If you do not
 know something, say so and offer to find out rather than guessing. Never invent prices, availability,
 or commitments. If someone asks for a human, say you will pass it along and stop selling.
-`;
+${about ? `\n## About ${name}\n\n${about.trim()}\n` : ""}`;
 
 export interface TranscriptTurn {
   role: "user" | "assistant";
@@ -234,10 +234,11 @@ export class MemoryTranscriptStore implements TranscriptStore {
 }
 
 /** Read the persona file, writing the default first if it does not exist. */
-export function loadPersona(path: string, name: string): string {
-  if (!existsSync(path)) {
+/** The persona file, written from the default the first time. `about` (re)writes it from a description. */
+export function loadPersona(path: string, name: string, about?: string): string {
+  if (!existsSync(path) || about) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    writeFileSync(path, DEFAULT_PERSONA(name), { mode: 0o600 });
+    writeFileSync(path, DEFAULT_PERSONA(name, about), { mode: 0o600 });
   }
   return readFileSync(path, "utf8");
 }

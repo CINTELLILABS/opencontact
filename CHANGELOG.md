@@ -10,6 +10,10 @@ First public release.
 
 ### Added
 
+- Sign in with Bland from setup: a code, the approval page in the browser, and the API key comes back to the
+  terminal. Pasting a key still works.
+- `--describe` for the persona brains: a business with no website describes itself, and the description becomes
+  the persona. Setup also asks whether to use a different picture than the website's logo.
 - Setup screens: numbered steps, live tasks with a timer, a progress bar while the agent builds, the agent's
   scenarios and a preview of the contact card in panels, and a summary with the next commands.
 - `npx opencontact <website>`: one command from a URL to a live agent. The contact card takes the business's name
