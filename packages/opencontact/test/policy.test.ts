@@ -82,6 +82,16 @@ describe("TakeoverTracker", () => {
     t = 31 * 60 * 1000;
     expect(tk.isPaused("c")).toBe(false);
   });
+  it("counts the pause from when the owner sent the message", () => {
+    const t = 60 * 60 * 1000;
+    const tk = new TakeoverTracker(30, () => t);
+    tk.ownerReplied("old", t - 45 * 60 * 1000);
+    expect(tk.isPaused("old")).toBe(false);
+    tk.ownerReplied("recent", t - 20 * 60 * 1000);
+    expect(tk.isPaused("recent")).toBe(true);
+    tk.resume("recent");
+    expect(tk.isPaused("recent")).toBe(false);
+  });
   it("does not pause when minutes is zero", () => {
     const tk = new TakeoverTracker(0);
     tk.ownerReplied("c");

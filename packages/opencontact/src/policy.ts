@@ -126,9 +126,21 @@ export class TakeoverTracker {
     return this.bridgeGuids.has(guid);
   }
 
-  ownerReplied(chatKey: string): void {
+  /**
+   * The owner texted in this chat at `at` (epoch ms; now when unknown). The pause
+   * runs from when they sent it, so a reply caught up on at startup only pauses
+   * for whatever is left of its window.
+   */
+  ownerReplied(chatKey: string, at?: number): void {
     if (this.minutes <= 0) return;
-    this.pausedUntil.set(chatKey, this.now() + this.minutes * 60 * 1000);
+    const until = (at ?? this.now()) + this.minutes * 60 * 1000;
+    if (until <= this.now()) return;
+    this.pausedUntil.set(chatKey, Math.max(until, this.pausedUntil.get(chatKey) ?? 0));
+  }
+
+  /** The owner handed this chat to the agent (it reached out on their word): lift any pause. */
+  resume(chatKey: string): void {
+    this.pausedUntil.delete(chatKey);
   }
 
   isPaused(chatKey: string): boolean {

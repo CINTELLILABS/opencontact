@@ -115,7 +115,7 @@ const inbound = (over: Partial<ImsgMessage> = {}): ImsgMessage => ({
   sender: "+1 (415) 555-1212",
   is_from_me: false,
   text: "Do you take Delta Dental?",
-  created_at: "2026-10-26T00:00:00Z",
+  created_at: new Date().toISOString(),
   attachments: [],
   ...over,
 });
@@ -235,6 +235,28 @@ describe("Bridge", () => {
     await bridge.idle();
     expect(audit.records.filter((r) => r.event === "owner_reply")).toHaveLength(1);
     expect(audit.records.at(-1)).toMatchObject({ event: "skipped", reason: "owner_takeover" });
+    expect(bland.relayed).toHaveLength(1);
+  });
+
+  it("pauses only for what is left of the window after an older owner message", async () => {
+    const { imsg, bland, bridge } = await setup({ ownerTakeoverMinutes: 30 });
+    const hoursAgo = new Date(Date.now() - 2 * 3600_000).toISOString();
+    // Caught up at startup: the owner texted this person two hours ago.
+    imsg.emit("message", inbound({ id: 1, is_from_me: true, guid: "OLD-1", text: "see you", created_at: hoursAgo }), 1);
+    imsg.emit("message", inbound({ id: 2, text: "hi" }), 1);
+    await bridge.idle();
+    expect(bland.relayed).toHaveLength(1);
+  });
+
+  it("lifts a pause when the agent reaches out on the owner's word", async () => {
+    const ledger = new MemorySentLedger();
+    const { imsg, bland, bridge } = await setup({ ownerTakeoverMinutes: 30 }, { ledger });
+    imsg.emit("message", inbound({ id: 1, is_from_me: true, guid: "OWNER-1", text: "hey" }), 1);
+    // `opencontact text` in another tab: its send is in the shared ledger.
+    ledger.add("OUTREACH-1");
+    imsg.emit("message", inbound({ id: 2, is_from_me: true, guid: "OUTREACH-1", text: "Hi Sam, Acme here" }), 1);
+    imsg.emit("message", inbound({ id: 3, text: "hi" }), 1);
+    await bridge.idle();
     expect(bland.relayed).toHaveLength(1);
   });
 

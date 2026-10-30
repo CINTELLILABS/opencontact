@@ -633,7 +633,11 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
   );
   const live = await confirm("Go live now?", true);
   if (!live) say(paint.dim("dry-run it is"));
-  if (live) args.flags.set("live", true);
+  if (live) {
+    args.flags.set("live", true);
+    // Remember the answer, so the next `opencontact run` is live too. D in the run goes back.
+    saveConfig(configPath, { ...readConfigFile(configPath), dryRun: false });
+  }
   await cmdRun(args, configPath);
 }
 
