@@ -4,6 +4,7 @@
  * when stdin is not a TTY (CI, a harness piping commands).
  */
 import { createInterface } from "node:readline/promises";
+import { wrap } from "./view.ts";
 
 const out = (s: string) => process.stderr.write(s);
 
@@ -13,10 +14,13 @@ export function interactive(): boolean {
 
 export async function ask(question: string, fallback = ""): Promise<string> {
   if (!interactive()) return fallback;
+  // The question goes on its own line and the reader gets a short prompt: readline
+  // redraws a prompt that wraps in a narrow terminal by clearing the lines above it.
+  const suffix = fallback ? ` (Enter: ${fallback})` : "";
+  out(`${indented(`${question}${suffix}`)}\n`);
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const suffix = fallback ? ` (${fallback})` : "";
-    const answer = (await rl.question(`${question}${suffix}: `)).trim();
+    const answer = (await rl.question(`    ${paint.accent("›")} `)).trim();
     return answer.length > 0 ? answer : fallback;
   } finally {
     rl.close();
@@ -25,9 +29,18 @@ export async function ask(question: string, fallback = ""): Promise<string> {
 
 export async function confirm(question: string, fallback = true): Promise<boolean> {
   if (!interactive()) return fallback;
-  const answer = (await ask(`${question} [${fallback ? "Y/n" : "y/N"}]`)).toLowerCase();
+  const answer = (await ask(`${question} ${paint.dim(fallback ? "[Y/n]" : "[y/N]")}`)).toLowerCase();
   if (answer === "") return fallback;
   return answer.startsWith("y");
+}
+
+/** Wrap a question to the terminal, keeping its indent on every line. */
+function indented(text: string): string {
+  const indent = text.match(/^ */)?.[0] ?? "";
+  const width = Math.max(30, (process.stderr.columns ?? 80) - indent.length - 2);
+  return wrap(text.trimStart(), width)
+    .map((line) => indent + line)
+    .join("\n");
 }
 
 /** Read a secret without echoing it. */
@@ -76,13 +89,13 @@ export async function choose<T>(
   if (!interactive()) return items[fallbackIndex];
   out(`${question}\n`);
   items.forEach((item, i) => {
-    out(`  ${String(i + 1).padStart(2)}. ${label(item)}\n`);
+    out(`    ${paint.accent(String(i + 1).padStart(2))}  ${label(item)}\n`);
   });
   for (;;) {
-    const answer = await ask("Number", String(fallbackIndex + 1));
+    const answer = await ask(paint.dim("    Pick a number"), String(fallbackIndex + 1));
     const n = Number(answer);
     if (Number.isInteger(n) && n >= 1 && n <= items.length) return items[n - 1];
-    out(`  pick 1–${items.length}\n`);
+    out(`    pick 1–${items.length}\n`);
   }
 }
 
@@ -113,6 +126,8 @@ export const paint = {
   green: (s: string) => (process.stderr.isTTY ? `\x1b[32m${s}\x1b[0m` : s),
   yellow: (s: string) => (process.stderr.isTTY ? `\x1b[33m${s}\x1b[0m` : s),
   red: (s: string) => (process.stderr.isTTY ? `\x1b[31m${s}\x1b[0m` : s),
+  /** Bland's red-orange. */
+  accent: (s: string) => (process.stderr.isTTY ? `\x1b[38;5;166m${s}\x1b[0m` : s),
 };
 
 export function say(line = ""): void {

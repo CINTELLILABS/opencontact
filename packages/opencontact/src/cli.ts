@@ -281,7 +281,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
         { k: "openai", label: "An OpenAI API key, or any OpenAI-compatible endpoint" },
         { k: "command", label: "Any command: prompt on stdin, reply on stdout (an OpenClaw gateway, your own script)" },
       );
-      const pick = await choose("     Who should answer the texts?", options, (o) => o.label);
+      const pick = await choose("    Who should answer the texts?", options, (o) => o.label);
       choice = pick?.k ?? "bland";
     }
   }
@@ -336,22 +336,22 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       else fail("no terminal to ask in: pass --agent <uuid> or --website <url>.");
     } else if (!agentId) {
       const choice = await ask(
-        "     Build one from your website (enter the URL), or type 'pick' to use an existing agent",
-        existing.agentId ? "keep current" : "",
+        "    Your business's website to build the agent from, or 'pick' for one you already have",
+        existing.agentId ? "the current agent" : "",
       );
-      if (choice === "keep current" && existing.agentId) agentId = existing.agentId;
+      if (choice === "the current agent" && existing.agentId) agentId = existing.agentId;
       else if (choice.toLowerCase() === "pick" || choice === "") {
         const loading = ui.task("Loading your agents");
         const agents = await bland.listAgents().catch(() => []);
         if (agents.length > 0) loading.done(`${agents.length} agent${agents.length === 1 ? "" : "s"}`);
         else loading.warn("no agents yet");
         if (agents.length === 0) {
-          const url = await ask("     Your business website");
+          const url = await ask("    Your business website");
           if (!url) fail("need a website or an agent id (--website or --agent).");
           ({ id: agentId, name: agentName } = await buildFromWebsite(bland, url));
           builtFrom = websiteUrl(url);
         } else {
-          const picked = await choose("     Which agent should answer?", agents.slice(0, 15), (a) => a.name);
+          const picked = await choose("    Which agent should answer?", agents.slice(0, 15), (a) => a.name);
           if (!picked) fail("no agent chosen");
           agentId = picked.id;
           agentName = picked.name;
@@ -380,7 +380,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
         process.env.ANTHROPIC_API_KEY ??
         (next.brain?.kind === "anthropic" ? next.brain.apiKey : "") ??
         "";
-      if (!key) key = await askHidden("     Anthropic API key (hidden)");
+      if (!key) key = await askHidden("    Anthropic API key (hidden)");
       if (!key) fail("no Anthropic key. Pass --anthropic-key or set ANTHROPIC_API_KEY.");
       next.brain = {
         kind: "anthropic",
@@ -394,12 +394,12 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       const models = (await detectOllama(OLLAMA_BASE_URL)) ?? [];
       let model = flagString(args, "model") ?? "";
       if (!model && models.length > 0)
-        model = (await choose("     Which local model?", models, (m) => m)) ?? (models[0] as string);
+        model = (await choose("    Which local model?", models, (m) => m)) ?? (models[0] as string);
       if (!model) model = BRAIN_PRESETS.ollama.model;
       if (models.length === 0)
         say(
           paint.yellow(
-            `     Ollama is not answering at ${OLLAMA_BASE_URL}. Start it (ollama serve) and pull a model (ollama pull ${model}).`,
+            `    Ollama is not answering at ${OLLAMA_BASE_URL}. Start it (ollama serve) and pull a model (ollama pull ${model}).`,
           ),
         );
       next.brain = {
@@ -419,7 +419,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
         "";
       const baseUrl = flagString(args, "base-url") ?? "https://api.openai.com/v1";
       const local = /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(baseUrl);
-      if (!key && !local) key = await askHidden("     OpenAI API key (hidden)");
+      if (!key && !local) key = await askHidden("    OpenAI API key (hidden)");
       if (!key && !local) fail("no OpenAI key. Pass --openai-key or set OPENAI_API_KEY.");
       next.brain = {
         kind: "openai",
@@ -442,17 +442,17 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
         personaName: agentName,
         label: `preset:${preset} ${p.label}`,
       };
-      say(paint.dim(`     ${command}`));
+      say(paint.dim(`    ${command}`));
       say(
         paint.dim(
-          "     Runs the official CLI with the login already on this Mac. Whether your plan covers that is the vendor's policy; an API key always works.",
+          "    Runs the official CLI with the login already on this Mac. Whether your plan covers that is the vendor's policy; an API key always works.",
         ),
       );
     } else {
       let command = flagString(args, "command") ?? (next.brain?.kind === "command" ? next.brain.command : "") ?? "";
       if (!command)
         command = await ask(
-          "     Command to run per message (prompt on stdin, reply on stdout)",
+          "    Command to run per message (prompt on stdin, reply on stdout)",
           'claude -p "Reply as the persona. Output only the reply."',
         );
       if (!command) fail("no command. Pass --command.");
@@ -492,7 +492,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
   } else if (answerFlag) next.answer = answerFlag;
   else if (!next.answer && interactive()) {
     const pick = await choose(
-      "     Who should it answer?",
+      "    Who should it answer?",
       [
         { m: "everyone" as const, label: "Everyone who texts this number (a business line)" },
         {
@@ -505,7 +505,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
     );
     next.answer = pick?.m ?? "everyone";
     if (next.answer === "list" && (next.allowFrom ?? []).length === 0) {
-      const own = await ask("     A number to allow (E.164, like +14155551212)");
+      const own = await ask("    A number to allow (E.164, like +14155551212)");
       if (own) next.allowFrom = [normalizeHandle(own)];
     }
   } else if (!next.answer) next.answer = (next.allowFrom ?? []).length > 0 ? "list" : "everyone";
@@ -535,11 +535,12 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       const logo = await fetchSiteLogo(builtFrom, join(CONFIG_DIR, "assets"));
       if (logo) taking.done(`logo from ${host}`);
       else taking.warn(`${host} has no logo a card can use`);
-      const own = interactive()
-        ? await ask(
-            `    ${logo ? "Use a different picture?" : "Add a picture?"} Path to a PNG or JPEG, or Enter to ${logo ? "keep it" : "skip"}`,
-          )
-        : "";
+      const own =
+        interactive() && !yes
+          ? await ask(
+              `    ${logo ? "Use a different picture?" : "Add a picture?"} Path to a PNG or JPEG, or Enter to ${logo ? "keep it" : "skip"}`,
+            )
+          : "";
       next.contactCard = {
         name: agentName,
         phone: cardPhone ?? next.contactCard?.phone,
@@ -554,11 +555,11 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       };
     } else if (!next.contactCard && interactive()) {
       say("    After its first text, the agent can send a contact card so customers save you by name, with a logo.");
-      if (await confirm("     Send one?", true)) {
-        const name = await ask("     Business name on the card", agentName || undefined);
+      if (await confirm("    Send one?", true)) {
+        const name = await ask("    Business name on the card", agentName || undefined);
         const own = await detectOwnHandle(resolvedImsg);
-        const phone = await ask("     Number on the card (the one customers text)", own ?? undefined);
-        const logo = await ask("     Logo file (.png or .jpg), or leave blank");
+        const phone = await ask("    Number on the card (the one customers text)", own ?? undefined);
+        const logo = await ask("    Logo file (.png or .jpg), or leave blank");
         if (name) next.contactCard = { name, ...(phone ? { phone } : {}), ...(logo ? { photoPath: logo } : {}) };
       }
     }
@@ -568,13 +569,13 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
       else
         say(
           paint.yellow(
-            "     The card has no number, so Add to Contacts will not attach your line. Set one: opencontact card --phone +1…",
+            "    The card has no number, so Add to Contacts will not attach your line. Set one: opencontact card --phone +1…",
           ),
         );
     }
     if (next.contactCard && !next.contactCard.name) next.contactCard = undefined;
     if (next.contactCard?.photoPath && !existsSync(next.contactCard.photoPath)) {
-      say(paint.yellow(`     logo ${next.contactCard.photoPath} not found; card goes out without a photo`));
+      say(paint.yellow(`    logo ${next.contactCard.photoPath} not found; card goes out without a photo`));
       next.contactCard = { ...next.contactCard, photoPath: undefined };
     }
     const card = next.contactCard;
@@ -663,7 +664,7 @@ async function signInWithBrowser(apiUrl: string): Promise<string> {
     `Your code  ${ui.tone.bold(ui.tone.accent(login.userCode))}`,
     "",
     "Approve it in the browser window that just opened. If none opened, go to:",
-    ui.tone.blue(login.url),
+    ui.tone.link(login.url),
   ]);
   spawnSync("open", [login.url], { stdio: "ignore" });
   const waiting = ui.task("Waiting for you to approve the code in the browser");

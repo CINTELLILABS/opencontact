@@ -12,15 +12,29 @@ const cols = () => Math.max(40, Math.min(process.stderr.columns ?? 80, 100));
 const boxWidth = () => Math.min(cols() - 4, 72);
 
 const esc = (code: string) => (s: string) => (tty() ? `\x1b[${code}m${s}\x1b[0m` : s);
+const truecolor = () => /truecolor|24bit/i.test(process.env.COLORTERM ?? "");
+/** A brand color: exact where the terminal can show it, the nearest of the 256 colors elsewhere. */
+const hue = (hex: string, fallback: number) => {
+  const [r, g, b] = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+  return (s: string) => esc(truecolor() ? `38;2;${r};${g};${b}` : `38;5;${fallback}`)(s);
+};
+
+/** Bland's palette, from bland.ai: near-black and warm grays, one red-orange accent, green for success. */
+export const brand = {
+  accent: hue("#d8441f", 166),
+  green: hue("#048244", 29),
+  warm: hue("#ddddd5", 253),
+};
+
 export const tone = {
   bold: esc("1"),
   dim: esc("2"),
-  green: esc("32"),
-  yellow: esc("33"),
-  red: esc("31"),
-  blue: esc("38;5;75"),
-  accent: esc("38;5;213"),
-  faint: esc("38;5;240"),
+  green: brand.green,
+  yellow: hue("#c98a00", 172),
+  red: hue("#c4321b", 160),
+  accent: brand.accent,
+  link: esc("4"),
+  faint: esc("38;5;244"),
 };
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -33,13 +47,13 @@ function seconds(ms: number): string {
 /** The title block at the top of setup. */
 export function banner(version: string, tagline: string): void {
   const width = boxWidth();
-  const title = `${tone.bold("opencontact")}  ${tone.faint(`v${version}`)}`;
+  const title = `${tone.bold("opencontact")} ${tone.faint("by")} ${tone.bold("Bland")}  ${tone.faint(`v${version}`)}`;
   const line = (s: string) =>
     `  ${tone.faint("│")}  ${s}${" ".repeat(Math.max(0, width - 4 - visibleWidth(s)))}${tone.faint("│")}`;
   out("\n");
   out(`  ${tone.faint(`╭${"─".repeat(width - 2)}╮`)}\n`);
   out(`${line(title)}\n`);
-  out(`${line(tone.dim(truncate(tagline, width - 6)))}\n`);
+  for (const piece of wrap(tagline, width - 6)) out(`${line(tone.dim(piece))}\n`);
   out(`  ${tone.faint(`╰${"─".repeat(width - 2)}╯`)}\n`);
 }
 
@@ -77,11 +91,11 @@ export function task(label: string): Task {
     const width = cols() - 4;
     const time = tone.faint(seconds(Date.now() - started));
     const head = truncate(label, width - 12);
-    const lines = [`  ${tone.blue(FRAMES[frame % FRAMES.length] as string)} ${head}  ${time}`];
+    const lines = [`  ${brand.accent(FRAMES[frame % FRAMES.length] as string)} ${head}  ${time}`];
     if (detail || fraction !== undefined) {
       const barWidth = fraction === undefined ? 0 : Math.min(24, Math.floor(width / 4));
       const filled = Math.round((fraction ?? 0) * barWidth);
-      const bar = barWidth ? `${tone.accent("━".repeat(filled))}${tone.faint("━".repeat(barWidth - filled))}  ` : "";
+      const bar = barWidth ? `${brand.accent("━".repeat(filled))}${tone.faint("━".repeat(barWidth - filled))}  ` : "";
       lines.push(`    ${bar}${tone.dim(truncate(detail, width - barWidth - 6))}`);
     }
     clear();
@@ -122,7 +136,7 @@ export function panel(title: string, body: string[]): void {
   out(`\n  ${tone.faint("╭─ ")}${tone.bold(title)}${tone.faint(` ${rule}╮`)}\n`);
   const row = (s: string) =>
     out(`  ${tone.faint("│")} ${s}${" ".repeat(Math.max(0, inner - visibleWidth(s)))} ${tone.faint("│")}\n`);
-  for (const line of body) {
+  for (const line of body.flatMap((l) => l.split("\n"))) {
     if (line === "") row("");
     // Lines that fit keep their spacing (labels, bullets); only long text wraps.
     else if (visibleWidth(line) <= inner) row(line);
@@ -133,7 +147,9 @@ export function panel(title: string, body: string[]): void {
 
 /** "label   value" rows for a panel. */
 export function field(label: string, value: string): string {
-  return `${tone.faint(label.padEnd(11))}${value}`;
+  const pad = 11;
+  const lines = wrap(value, boxWidth() - 4 - pad);
+  return lines.map((v, i) => (i === 0 ? `${tone.faint(label.padEnd(pad))}${v}` : `${" ".repeat(pad)}${v}`)).join("\n");
 }
 
 /** A finished line: "✓ text". */
