@@ -48,7 +48,8 @@ not what a personal one does. `--only <number>` restricts it while testing.
    npx opencontact setup --api-key "$BLAND_API_KEY" --agent <agent-uuid> --yes
    ```
    `--yes` installs `imsg` if it is missing (signed release build, checksum and Developer ID verified; Homebrew only as a fallback) and skips confirmations. Without `--agent` you can
-   pass `--website <url>` and `opencontact` builds the agent itself. Config lands in `~/.config/opencontact/config.json`
+   pass `--website <url>` and `opencontact` builds the agent itself, with a contact card carrying the business's
+   name and the logo from its site. Config lands in `~/.config/opencontact/config.json`
    (mode 0600). The agent answers anyone who texts the line. If the owner wants to try it alone first, add
    `--only <owner's own phone>`; `npx opencontact everyone` opens it back up.
 2. **Permissions.** `opencontact` probes imsg and prints the exact System Settings path when something is missing:

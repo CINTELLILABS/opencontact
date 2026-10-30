@@ -56,10 +56,12 @@ No new number. No carrier forms. No server.
 **Answer your business line.**
 
 ```sh
-npx opencontact setup --website acme-dental.com
-opencontact card "Acme Dental" --logo logo.png
+npx opencontact acme-dental.com
 opencontact run --live
 ```
+
+The agent, the contact card and its logo all come from the website. Change the card any time with
+`opencontact card "Acme Dental" --logo logo.png`.
 
 **Remind everyone on a list.** Each person gets their own message, the replies come back in parallel, and the
 agent only talks to people it texted first.
@@ -117,8 +119,9 @@ shorter", "never quote prices", "hand off when someone says cancel". Claude Code
 | Command                                   | What it does                                                          |
 | ----------------------------------------- | --------------------------------------------------------------------- |
 | `opencontact`                             | First run: guided setup. After that: same as `run`.                   |
+| `opencontact <website>`                   | Build that business's agent from its site, with a card carrying its name and logo, and go live. |
 | `opencontact run [--live]`                | The live view: every conversation in a sidebar, the open one as chat bubbles. **↑↓** switch, **Enter** write as yourself, **A** hand back to the agent, **F** follow the latest, **L**/**D** live or dry-run, **Q** quit. |
-| `opencontact text <number> "why"`         | The agent reaches out first, then sends your card.                    |
+| `opencontact text <number> "why"`         | The agent reaches out first, then sends your card. `--name Kyle` so it greets the right person. |
 | `opencontact text --list people.csv "why"` | Reach out to a whole list. Names and any other columns become details for each message. |
 | `opencontact answer everyone\|outbound`   | Answer anyone, or only people the agent texted first.                 |
 | `opencontact only <number…>`              | Answer only these numbers, for testing on a personal line.            |
@@ -128,6 +131,7 @@ shorter", "never quote prices", "hand off when someone says cancel". Claude Code
 | `opencontact log`                         | The last decisions: what came in, what went out, what was skipped and why. |
 | `opencontact doctor`                      | Checks imsg, permissions, keys, config. Paste it into bug reports.    |
 | `opencontact stop`                        | Stop the running agent. Only one runs per Mac.                        |
+| `opencontact forget <number>`             | Start a contact over: a new conversation, and the card goes again. For rehearsing. |
 | `opencontact setup`                       | Run setup again. Flags for scripts: `--brain`, `--website`, `--agent`, `--answer`, `--only`, `--live`, `--yes`. |
 
 Requirements: macOS 14 or later, Node 24 or later. macOS asks for Full Disk Access and Automation → Messages for

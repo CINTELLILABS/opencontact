@@ -130,6 +130,15 @@ describe("startOutbound", () => {
     );
     expect(again.cardSent).toBe(false);
     expect(again.cardAlreadySent).toBe(true);
+
+    // A name rides along on the contact, so the agent greets the right person.
+    await startOutbound(
+      { config, brain, imsg: imsg as never, state, audit, log: silentLogger, name: "Kyle" },
+      "+14155551212",
+      "The recipient's name is Kyle.",
+    );
+    expect(opened.at(-1)?.contact).toEqual({ phone_number: "+14155551212", name: "Kyle" });
+    expect(state.load().conversations["+14155551212"]?.name).toBe("Kyle");
     const forced = await startOutbound(
       {
         config,

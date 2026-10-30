@@ -22,7 +22,7 @@ Request:
 | ------------------ | ------- | --------------------------------------------------------------------- |
 | `agent_id`         | UUID    | required                                                              |
 | `end_user_id`      | string  | required, ≤ 255 chars. The bridge uses the normalized handle.        |
-| `contact`          | object  | optional `{ phone_number, email, name }`; links memory to the contact |
+| `contact`          | object  | optional `{ phone_number, email, name }`; links memory to the contact. `name` is 1 to 200 characters; the bridge sends it when `opencontact text` knows who it is texting (`--name`, or a list's name column) |
 | `metadata`         | object  | optional, returned on the conversation                                |
 | `request_data`     | object  | optional variables for the agent                                      |
 | `webhook`          | URL     | optional                                                              |

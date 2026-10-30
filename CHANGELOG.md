@@ -10,6 +10,9 @@ First public release.
 
 ### Added
 
+- `npx opencontact <website>`: one command from a URL to a live agent. The contact card takes the business's name
+  and its logo from the site (Apple touch icon, then favicon, then `og:image`; PNG or JPEG only).
+- `opencontact text --name`, passed to Bland as the contact's name; `opencontact forget <number>` to rehearse from scratch.
 - `npx opencontact`: guided setup on the Mac signed into Messages. Installs `imsg` from its signed release
   (SHA-256 and Developer ID checked), asks who should answer, walks through Full Disk Access and Automation,
   and starts.

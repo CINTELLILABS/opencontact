@@ -16,7 +16,7 @@
  * vendors' published HTTP references.
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type InboundImage, imageBase64 } from "./attachments.ts";
 import type { AuditSink } from "./audit.ts";
@@ -42,7 +42,8 @@ export interface Brain {
   /** Answer one inbound text from `handle`. `guid` is the idempotency key. */
   reply(handle: string, text: string, guid: string, images?: InboundImage[]): Promise<BrainReply>;
   /** Speak first. `context` is why we are reaching out. */
-  open(handle: string, context?: string): Promise<BrainReply>;
+  /** `name` is who we are texting, when we know it; Bland files it on the contact. */
+  open(handle: string, context?: string, name?: string): Promise<BrainReply>;
   /** Cheap credential or availability check for `doctor`. */
   check(): Promise<{ ok: boolean; detail: string }>;
 }
@@ -86,8 +87,11 @@ export class BlandBrain implements Brain {
     };
   }
 
-  async open(handle: string, context?: string): Promise<BrainReply> {
+  async open(handle: string, context?: string, name?: string): Promise<BrainReply> {
     const contact = contactFor(handle);
+    // Bland takes a name of 1 to 200 characters.
+    const label = name?.trim().slice(0, 200);
+    if (contact && label) contact.name = label;
     const convo = await this.bland.openChat({
       agentId: this.config.agentId,
       endUserId: handle,
@@ -159,7 +163,7 @@ function toBrainStatus(status: "active" | "ended" | "timeout" | "human_handoff")
   return status === "timeout" ? "ended" : status;
 }
 
-function contactFor(handle: string): { phone_number?: string; email?: string } | undefined {
+function contactFor(handle: string): { phone_number?: string; email?: string; name?: string } | undefined {
   if (isPhoneHandle(handle)) return { phone_number: handle };
   if (isEmailHandle(handle)) return { email: handle };
   return undefined;
@@ -208,6 +212,14 @@ export class FileTranscriptStore implements TranscriptStore {
     const path = this.pathFor(handle);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     appendFileSync(path, `${JSON.stringify(turn)}\n`, { mode: 0o600 });
+  }
+
+  /** Drop everything kept for this contact. */
+  forget(handle: string): boolean {
+    const path = this.pathFor(handle);
+    if (!existsSync(path)) return false;
+    rmSync(path);
+    return true;
   }
 }
 

@@ -16,7 +16,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { JsonlAudit } from "./audit.ts";
 import { BlandApiError, BlandClient } from "./bland.ts";
-import { detectOllama, loadPersona } from "./brain.ts";
+import { detectOllama, FileTranscriptStore, loadPersona } from "./brain.ts";
 import { createBrain } from "./brains.ts";
 import { BRIDGE_VERSION, Bridge } from "./bridge.ts";
 import {
@@ -26,6 +26,7 @@ import {
   type BrainConfig,
   type BrainPreset,
   type BridgeConfig,
+  CONFIG_DIR,
   type ConfigInput,
   configSecrets,
   DEFAULT_ANTHROPIC_MODEL,
@@ -49,6 +50,7 @@ import { createLogger, type Level } from "./log.ts";
 import { startOutbound } from "./outbound.ts";
 import { ask, askHidden, choose, confirm, interactive, paint, say, spinner } from "./prompt.ts";
 import { parseRecipients, recipientContext } from "./recipients.ts";
+import { fetchSiteLogo } from "./site-logo.ts";
 import { FileStateStore } from "./state.ts";
 import { buildVCard, type ContactCard } from "./vcard.ts";
 import { formatHandle, LiveView } from "./view.ts";
@@ -92,13 +94,15 @@ const HELP = `opencontact ${BRIDGE_VERSION} — Contacts In Your Phone
 Put your business's AI agent behind the iMessage line on this Mac.
 
   opencontact                     first run: guided setup, then start
+  opencontact <website>           build that business's agent, card and logo from its site, and go live
   opencontact setup               build an agent from your website (or pick one), permissions, go live
   opencontact run [--live]        answer texts in the live view. L live · D dry-run · Q quit. --log for plain logs
   opencontact doctor [--json]     check imsg, permissions, API key, config
-  opencontact text <handle> [why]  the agent reaches out first ("follow up on Thursday's quote"); --resend-card
+  opencontact text <handle> [why]  the agent reaches out first ("follow up on Thursday's quote"); --name, --resend-card
   opencontact text --list people.csv [why]   reach out to everyone on a list (phone[,name][,details…])
   opencontact card "<business>" [--logo file.png] [--phone <handle>]   set the contact card sent to new customers
   opencontact stop                stop a running opencontact
+  opencontact forget <handle>     start a contact over (new conversation, card again); for rehearsals
   opencontact brain <who>         switch who answers: bland | claude-code | codex | ollama | anthropic | openai
   opencontact answer everyone     reply to anyone who texts this number (default)
   opencontact answer list         reply only to numbers on the list: opencontact only +1… (repeatable)
@@ -284,6 +288,8 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
   const preset: BrainPreset | null = choice in BRAIN_PRESETS ? (choice as BrainPreset) : null;
   const brainKind: BrainConfig["kind"] = preset ? BRAIN_PRESETS[preset].kind : (choice as BrainConfig["kind"]);
   let agentName = flagString(args, "name") ?? next.contactCard?.name ?? "";
+  // Set when the agent is built from a site, so the card can carry that business's name and logo.
+  let builtFrom: string | undefined;
   const personaPath =
     flagString(args, "persona") ??
     (next.brain && "personaPath" in next.brain ? next.brain.personaPath : undefined) ??
@@ -319,6 +325,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
     const website = flagString(args, "website");
     if (!agentId && website) {
       ({ id: agentId, name: agentName } = await buildFromWebsite(bland, website));
+      builtFrom = websiteUrl(website);
     } else if (!agentId && !interactive()) {
       if (existing.agentId) agentId = existing.agentId;
       else fail("no terminal to ask in: pass --agent <uuid> or --website <url>.");
@@ -336,6 +343,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
           const url = await ask("     Your business website");
           if (!url) fail("need a website or an agent id (--website or --agent).");
           ({ id: agentId, name: agentName } = await buildFromWebsite(bland, url));
+          builtFrom = websiteUrl(url);
         } else {
           const picked = await choose("     Which agent should answer?", agents.slice(0, 15), (a) => a.name);
           if (!picked) fail("no agent chosen");
@@ -344,6 +352,7 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
         }
       } else {
         ({ id: agentId, name: agentName } = await buildFromWebsite(bland, choice));
+        builtFrom = websiteUrl(choice);
       }
     }
     next.agentId = agentId;
@@ -502,7 +511,22 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
     const cardName = flagString(args, "card-name");
     const cardPhone = flagString(args, "card-phone");
     const cardLogo = flagString(args, "card-logo");
-    if (cardName || cardPhone || cardLogo) {
+    if (builtFrom && !cardName && !cardLogo) {
+      // A new business: its own name, its own logo from its site, the same line.
+      const stop = spinner(`     taking the logo from ${new URL(builtFrom).hostname}`);
+      const logo = await fetchSiteLogo(builtFrom, join(CONFIG_DIR, "assets"));
+      stop(
+        logo
+          ? paint.green("     ✓ logo from the website")
+          : paint.dim("     no logo on the site; the card goes without one"),
+      );
+      next.contactCard = {
+        name: agentName,
+        phone: cardPhone ?? next.contactCard?.phone,
+        url: builtFrom,
+        photoPath: logo ?? undefined,
+      };
+    } else if (cardName || cardPhone || cardLogo) {
       next.contactCard = {
         name: cardName ?? next.contactCard?.name ?? agentName ?? "",
         phone: cardPhone ?? next.contactCard?.phone,
@@ -541,6 +565,13 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
   const check = resolveConfig(next, {});
   if (!check.ok) fail(check.errors.join("\n  "));
   saveConfig(configPath, next);
+  if (builtFrom) {
+    // A different business: everyone gets its card, not the one they saved before.
+    const store = new FileStateStore(join(check.config.stateDir, "state.json"));
+    const st = store.load();
+    st.cardSentTo = [];
+    store.save(st);
+  }
   say();
   say(paint.dim(`saved ${configPath} (mode 0600)`));
 
@@ -568,8 +599,12 @@ async function cmdSetup(args: Args, configPath: string): Promise<void> {
   await cmdRun(args, configPath);
 }
 
+function websiteUrl(website: string): string {
+  return /^https?:\/\//.test(website) ? website : `https://${website}`;
+}
+
 async function buildFromWebsite(bland: BlandClient, website: string): Promise<{ id: string; name: string }> {
-  const url = /^https?:\/\//.test(website) ? website : `https://${website}`;
+  const url = websiteUrl(website);
   const stop = spinner(`reading ${url} and writing your agent (about a minute)`);
   try {
     const agent = await bland.generateAgent(url, randomUUID().replace(/-/g, "").slice(0, 32));
@@ -955,7 +990,9 @@ async function cmdText(args: Args, configPath: string): Promise<void> {
       `${paint.bold(`texting ${recipients.length} ${recipients.length === 1 ? "person" : "people"}`)}${dryRun ? paint.yellow("  (dry run)") : ""}`,
     );
   } else {
-    recipients = [{ handle: normalizeHandle(handle as string), context: why }];
+    const name = flagString(args, "name");
+    const one = { handle: normalizeHandle(handle as string), name, details: {} };
+    recipients = [{ handle: one.handle, name, context: recipientContext(why, one) || undefined }];
   }
 
   // A restriction list must include everyone we are about to text, or their replies would be ignored.
@@ -1085,6 +1122,29 @@ function cmdStop(configPath: string): void {
   process.stdout.write(`stopped opencontact (pid ${pid})\n`);
 }
 
+/** Start a contact over: new conversation, card sent again, local transcript gone. For rehearsing a demo. */
+function cmdForget(args: Args, configPath: string): void {
+  const raw = args.positional[0];
+  if (!raw) fail("usage: opencontact forget <phone-or-email>");
+  const handle = normalizeHandle(raw);
+  const loaded = loadConfig(configPath);
+  const stateDir = loaded.ok ? loaded.config.stateDir : defaultConfig().stateDir;
+  const store = new FileStateStore(join(stateDir, "state.json"));
+  const state = store.load();
+  const had = Boolean(state.conversations[handle]) || state.cardSentTo.includes(handle);
+  delete state.conversations[handle];
+  state.cardSentTo = state.cardSentTo.filter((h) => h !== handle);
+  store.save(state);
+  const transcript = new FileTranscriptStore(join(stateDir, "transcripts")).forget(handle);
+  say(
+    had || transcript
+      ? `${paint.green("✓")} forgot ${formatHandle(handle)}: the next text opens a new conversation and sends the card again`
+      : `nothing kept for ${formatHandle(handle)}`,
+  );
+  if (loaded.ok && loaded.config.brain.kind === "bland")
+    say(paint.dim("  Bland still remembers this contact; reset its memory at app.bland.ai if you want a stranger."));
+}
+
 function cmdOnly(args: Args, configPath: string): void {
   const handles = args.positional.filter((h): h is string => Boolean(h));
   if (handles.length === 0) fail("usage: opencontact only <phone-or-email> [more…]   (opencontact everyone to clear)");
@@ -1198,6 +1258,11 @@ async function main(): Promise<void> {
     // Bare `opencontact`: set up the first time, run after that.
     return loadConfig(configPath).ok ? cmdRun(args, configPath) : cmdSetup(args, configPath);
   }
+  if (/^(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i.test(args.command)) {
+    // `npx opencontact acmedental.com`: build that business's agent and go live.
+    args.flags.set("website", args.command);
+    return cmdSetup(args, configPath);
+  }
   switch (args.command) {
     case "setup":
     case "init":
@@ -1212,6 +1277,8 @@ async function main(): Promise<void> {
       return cmdCard(args, configPath);
     case "stop":
       return cmdStop(configPath);
+    case "forget":
+      return cmdForget(args, configPath);
     case "only":
     case "allow":
       return cmdOnly(args, configPath);

@@ -42,7 +42,7 @@ export async function startOutbound(deps: OutboundDeps, rawHandle: string, conte
   if (!isPhoneHandle(handle) && !isEmailHandle(handle))
     throw new Error(`"${rawHandle}" is not a phone number or email`);
 
-  const turn = await brain.open(handle, context);
+  const turn = await brain.open(handle, context, deps.name);
   const replies = turn.texts.filter((t) => t.trim().length > 0);
   if (replies.length === 0)
     throw new Error(`the agent produced no opener (status ${turn.status}${turn.error ? `, ${turn.error}` : ""})`);
