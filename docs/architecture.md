@@ -25,12 +25,19 @@ All in `packages/opencontact/src`. TypeScript, Node 24, no runtime dependencies.
 | `attachments.ts`  | Picks the photos a brain may see: JPEG, PNG, GIF, WebP, present on disk, under 5 MB.   |
 | `bland.ts`        | Bland's API chat endpoints, agent generation, agent listing.                           |
 | `outbound.ts`     | `opencontact text`: the brain writes an opener, it is sent, then the card.              |
+| `recipients.ts`   | Reads a CSV list for `text --list`: finds the phone and name columns, keeps the rest as details. |
 | `vcard.ts`        | The business card as vCard 3.0, with the line's own number and an optional logo.        |
 | `state.ts`        | Cursor (last Messages row handled), conversation per contact, who has the card. Atomic writes. |
 | `ledger.ts`       | Message ids opencontact sent, shared on disk, so its own sends are never read as the owner typing. |
 | `lock.ts`         | One running instance per Mac.                                                           |
 | `audit.ts`        | Append-only JSONL of every decision, handles masked.                                    |
+| `handles.ts`      | Normalizes phone numbers and emails, masks them for logs, finds the Mac's own number.  |
+| `log.ts`          | Leveled logging with secrets redacted.                                                  |
 | `config.ts`       | Defaults, then the file, then the environment; validated; written `0600`.               |
+| `login.ts`        | Sign in with Bland: the device flow's code, the approval page, and polling for the key. |
+| `site-logo.ts`    | Takes a business's logo from its website for the card: touch icon, favicon, `og:image`. |
+| `view.ts`         | The live view: conversations sidebar, chat bubbles, the owner's composer.               |
+| `ui.ts`           | Setup's screens: step headers, live tasks with a timer, panels, Bland's colors.         |
 | `cli.ts`, `prompt.ts` | Commands, guided setup, prompts that degrade when there is no terminal.             |
 
 ## One inbound text
