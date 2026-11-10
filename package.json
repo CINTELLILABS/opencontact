@@ -24,6 +24,6 @@
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.3"
+    "@biomejs/biome": "2.6.6"
   }
 }
